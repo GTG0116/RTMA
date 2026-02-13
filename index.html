@@ -1,66 +1,61 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Live RTMA Weather Viewer</title>
+    <title>RTMA Weather Viewer</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100vw; height: 100vh; background: #222; }
-        .legend {
-            background: white; padding: 10px; border-radius: 5px;
-            box-shadow: 0 0 15px rgba(0,0,0,0.2); font-family: sans-serif;
-        }
+        body { margin: 0; padding: 0; background: #222; color: white; font-family: sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        #status { position: absolute; top: 10px; left: 50px; z-index: 1000; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px; pointer-events: none; }
     </style>
 </head>
 <body>
 
+<div id="status">Loading data...</div>
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // Initialize Map
     var map = L.map('map').setView([39.8283, -98.5795], 4);
+    var statusDiv = document.getElementById('status');
 
-    // Base Layer (Dark matter for contrast)
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        attribution: '&copy; OpenStreetMap, &copy; CARTO',
         subdomains: 'abcd',
         maxZoom: 19
     }).addTo(map);
 
-    // Layer Groups
     var layers = {
-        "Temperature": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7}),
-        "Wind Speed": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7}),
-        "Wind Gusts": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7}),
-        "Feels Like": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7})
+        "Temperature": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.6}),
+        "Wind Speed": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.6}),
+        "Wind Gusts": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.6})
     };
 
-    // Load Metadata and Update Layers
-    fetch('data/metadata.json')
-        .then(response => response.json())
-        .then(meta => {
-            var bounds = meta.bounds; // [[minLat, minLon], [maxLat, maxLon]]
-            
-            // RTMA files usually run South->North, West->East, but image overlay needs
-            // TopLeft to BottomRight.
-            // Note: The Python script output the image "upper" origin.
-            // We set bounds: [[South, West], [North, East]]
-            var imageBounds = [[bounds[0][0], bounds[0][1]], [bounds[1][0], bounds[1][1]]];
-
-            // Update Image Sources
-            layers["Temperature"].setUrl('data/temp.png').setBounds(imageBounds).addTo(map);
-            layers["Wind Speed"].setUrl('data/wind.png').setBounds(imageBounds);
-            layers["Wind Gusts"].setUrl('data/gust.png').setBounds(imageBounds);
-            layers["Feels Like"].setUrl('data/feel.png').setBounds(imageBounds);
-
-            // Add Layer Control
-            L.control.layers(null, layers).addTo(map);
-            
-            console.log("Data loaded from: " + meta.timestamp);
+    // Use relative path - this assumes index.html and data/ are siblings
+    fetch('./data/metadata.json')
+        .then(response => {
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            return response.json();
         })
-        .catch(err => console.error("Error loading metadata:", err));
+        .then(meta => {
+            statusDiv.innerHTML = "Data Timestamp: " + new Date(meta.timestamp).toLocaleString();
+            
+            // Fix bounds: [[South, West], [North, East]]
+            var b = meta.bounds; 
+            var imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
 
+            // Add layers
+            layers["Temperature"].setUrl('./data/temp.png').setBounds(imageBounds).addTo(map);
+            layers["Wind Speed"].setUrl('./data/wind.png').setBounds(imageBounds);
+            layers["Wind Gusts"].setUrl('./data/gust.png').setBounds(imageBounds);
+
+            L.control.layers(null, layers).addTo(map);
+        })
+        .catch(err => {
+            console.error(err);
+            statusDiv.innerHTML = "Error loading data: " + err.message + "<br>Check console for details.";
+            statusDiv.style.background = "rgba(200, 0, 0, 0.8)";
+        });
 </script>
 </body>
 </html>

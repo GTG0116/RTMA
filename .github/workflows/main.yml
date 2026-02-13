@@ -1,0 +1,43 @@
+name: Update RTMA Data
+
+on:
+  schedule:
+    # Run every hour at minute 15 (RTMA is usually ready by then)
+    - cron: '15 * * * *'
+  workflow_dispatch: # Allow manual run
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Mamba (Fast Conda)
+        uses: mamba-org/setup-micromamba@v1
+        with:
+          environment-name: geo-env
+          create-args: >-
+            python=3.9
+            xarray
+            cfgrib
+            matplotlib
+            scipy
+            boto3
+            eccodes
+            numpy
+
+      - name: Run Processing Script
+        shell: bash -l {0}
+        run: |
+          python process_rtma.py
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          force_orphan: true

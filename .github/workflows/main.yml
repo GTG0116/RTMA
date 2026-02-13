@@ -2,7 +2,7 @@ name: Update RTMA Data
 
 on:
   schedule:
-    - cron: '30 * * * *'
+    - cron: '15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -12,26 +12,43 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Setup Mamba
         uses: mamba-org/setup-micromamba@v1
         with:
           environment-name: geo-env
-          create-args: python=3.9 xarray cfgrib matplotlib boto3 eccodes numpy
-          
-      - name: Run Script
+          create-args: >-
+            python=3.9
+            xarray
+            cfgrib
+            matplotlib
+            scipy
+            boto3
+            eccodes
+            numpy
+
+      - name: Run Processing Script
         shell: bash -l {0}
         run: python process_rtma.py
 
-      - name: Debug - List Files
-        run: ls -R site/
+      # --- IMPORTANT FIXES START HERE ---
+      
+      # 1. Disable Jekyll processing (fixes 404s on _underscored files or certain folders)
+      - name: Add .nojekyll
+        run: touch site/.nojekyll
 
+      # 2. Debugging: Show us exactly what exists before we deploy
+      - name: Verify Files
+        run: |
+          echo "Listing site directory:"
+          ls -R site/
+
+      # 3. Deploy
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
-          # This ensures the files are pushed to the 'gh-pages' branch
           publish_branch: gh-pages

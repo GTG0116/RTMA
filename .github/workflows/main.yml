@@ -2,9 +2,8 @@ name: Update RTMA Data
 
 on:
   schedule:
-    # Run every hour at minute 15 (RTMA is usually ready by then)
-    - cron: '15 * * * *'
-  workflow_dispatch: # Allow manual run
+    - cron: '30 * * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,31 +12,26 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Setup Mamba (Fast Conda)
+      - name: Setup Mamba
         uses: mamba-org/setup-micromamba@v1
         with:
           environment-name: geo-env
-          create-args: >-
-            python=3.9
-            xarray
-            cfgrib
-            matplotlib
-            scipy
-            boto3
-            eccodes
-            numpy
-
-      - name: Run Processing Script
+          create-args: python=3.9 xarray cfgrib matplotlib boto3 eccodes numpy
+          
+      - name: Run Script
         shell: bash -l {0}
-        run: |
-          python process_rtma.py
+        run: python process_rtma.py
+
+      - name: Debug - List Files
+        run: ls -R site/
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
-          force_orphan: true
+          # This ensures the files are pushed to the 'gh-pages' branch
+          publish_branch: gh-pages

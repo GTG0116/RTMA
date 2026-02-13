@@ -1,20 +1,29 @@
 import os
+import json
 import boto3
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
-from datetime import datetime, timezone
 import matplotlib.colors as mcolors
+from datetime import datetime, timezone
 from botocore import UNSIGNED
 from botocore.client import Config
-import json
+from pathlib import Path
 
 # --- CONFIGURATION ---
 BUCKET_NAME = 'noaa-rtma-pds'
 REGION = 'us-east-1'
-# Use absolute pathing for the runner
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, 'site', 'data')
+
+# Strict Path Definitions
+BASE_DIR = Path(__file__).parent.resolve()
+SITE_DIR = BASE_DIR / "site"
+DATA_DIR = SITE_DIR / "data"
+
+def setup_directories():
+    """Force create the directories."""
+    if not DATA_DIR.exists():
+        print(f"Creating directory: {DATA_DIR}")
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_latest_rtma_key():
     s3 = boto3.client('s3', region_name=REGION, config=Config(signature_version=UNSIGNED))
@@ -22,10 +31,14 @@ def get_latest_rtma_key():
     date_str = today.strftime('%Y%m%d')
     prefix = f"rtma2p5.{date_str}/"
     
+    print(f"Searching S3 bucket: {BUCKET_NAME} prefix: {prefix}")
     response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
+    
     if 'Contents' not in response:
+        print("No contents found in S3.")
         return None
 
+    # Filter strictly for GRIB2 files (no indices)
     files = [obj['Key'] for obj in response['Contents'] 
              if '2dvaranl_ndfd.grb2' in obj['Key'] and not obj['Key'].endswith('.idx')]
     
@@ -33,66 +46,90 @@ def get_latest_rtma_key():
 
 def generate_layer(ds, variable, output_name, cmap, vmin, vmax):
     if variable not in ds:
-        print(f"Variable {variable} not found in dataset.")
+        print(f"Skipping {output_name}: Variable {variable} not found.")
         return
 
+    print(f"Generating image for {output_name}...")
     data = ds[variable].values
     
-    # Ensure directory exists
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
-    fig = plt.figure(figsize=(12, 8), frameon=False)
+    fig = plt.figure(figsize=(10, 10), frameon=False)
     ax = plt.Axes(fig, [0., 0., 1., 1.])
     ax.set_axis_off()
     fig.add_axes(ax)
 
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    # Use 'lower' or 'upper' based on how RTMA grid is stored
-    ax.imshow(data, cmap=cmap, norm=norm, origin='lower', aspect='auto')
+    # RTMA is usually upside down relative to Web Mercator, verify 'origin'
+    ax.imshow(data, cmap=cmap, norm=norm, origin='upper', aspect='auto')
     
-    save_path = os.path.join(OUTPUT_DIR, f"{output_name}.png")
-    plt.savefig(save_path, transparent=True, pad_inches=0, format='png', dpi=150)
+    save_path = DATA_DIR / f"{output_name}.png"
+    plt.savefig(save_path, transparent=True, pad_inches=0, format='png')
     plt.close()
-    print(f"Successfully saved: {save_path}")
+    
+    # Verify file was created
+    if save_path.exists():
+        print(f" -> Saved: {save_path} ({save_path.stat().st_size} bytes)")
+    else:
+        print(f" -> ERROR: Failed to save {save_path}")
 
 def main():
+    setup_directories()
+    
     key = get_latest_rtma_key()
     if not key:
-        print("No data found.")
+        print("Critical: No RTMA file found on S3.")
         return
 
-    # Create local temp file
-    local_file = os.path.join(BASE_DIR, "latest.grb2")
+    print(f"Downloading: {key}")
+    local_file = BASE_DIR / "latest.grb2"
+    
     s3 = boto3.client('s3', region_name=REGION, config=Config(signature_version=UNSIGNED))
-    s3.download_file(BUCKET_NAME, key, local_file)
+    s3.download_file(BUCKET_NAME, key, str(local_file))
 
-    # Open with cfgrib (ignoring index files for speed/permissions)
-    ds = xr.open_dataset(local_file, engine='cfgrib', 
-                         backend_kwargs={'indexpath': '', 'filter_by_keys': {'typeOfLevel': 'heightAboveGround', 'level': 2}})
+    # --- PROCESS 2M TEMP ---
+    try:
+        # We perform separate opens to avoid GRIB index conflicts
+        ds_temp = xr.open_dataset(local_file, engine='cfgrib', 
+                                  backend_kwargs={'filter_by_keys': {'typeOfLevel': 'heightAboveGround', 'level': 2}, 'indexpath': ''})
+        
+        ds_temp['t2m_f'] = (ds_temp['t2m'] - 273.15) * 9/5 + 32
+        generate_layer(ds_temp, 't2m_f', 'temp', 'turbo', -20, 110)
+        
+        # Save Metadata
+        lats, lons = ds_temp.latitude.values, ds_temp.longitude.values
+        metadata = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "bounds": [[float(lats.min()), float(lons.min())], [float(lats.max()), float(lons.max())]]
+        }
+        with open(DATA_DIR / "metadata.json", "w") as f:
+            json.dump(metadata, f)
+            print(" -> Saved: metadata.json")
+            
+    except Exception as e:
+        print(f"Error processing Temp: {e}")
 
-    # Temperature
-    ds['t2m_f'] = (ds['t2m'] - 273.15) * 9/5 + 32
-    generate_layer(ds, 't2m_f', 'temp', 'turbo', 0, 100)
+    # --- PROCESS WIND (10M) ---
+    try:
+        ds_wind = xr.open_dataset(local_file, engine='cfgrib', 
+                                  backend_kwargs={'filter_by_keys': {'typeOfLevel': 'heightAboveGround', 'level': 10}, 'indexpath': ''})
+        
+        # Calculate speed from U/V components if explicit speed missing
+        u = ds_wind['u10'] if 'u10' in ds_wind else None
+        v = ds_wind['v10'] if 'v10' in ds_wind else None
+        
+        if u is not None and v is not None:
+            ds_wind['wind_mph'] = np.sqrt(u**2 + v**2) * 2.23694
+            generate_layer(ds_wind, 'wind_mph', 'wind', 'viridis', 0, 60)
+            
+        if 'gust' in ds_wind:
+             ds_wind['gust_mph'] = ds_wind['gust'] * 2.23694
+             generate_layer(ds_wind, 'gust_mph', 'gust', 'plasma', 0, 80)
+             
+    except Exception as e:
+        print(f"Error processing Wind: {e}")
 
-    # Wind (Switching to 10m level)
-    ds_wind = xr.open_dataset(local_file, engine='cfgrib', 
-                              backend_kwargs={'indexpath': '', 'filter_by_keys': {'typeOfLevel': 'heightAboveGround', 'level': 10}})
-    
-    if 'u10' in ds_wind:
-        ds_wind['wind_mph'] = np.sqrt(ds_wind['u10']**2 + ds_wind['v10']**2) * 2.23694
-        generate_layer(ds_wind, 'wind_mph', 'wind', 'viridis', 0, 50)
-
-    # Metadata for Leaflet
-    lats, lons = ds.latitude.values, ds.longitude.values
-    metadata = {
-        "bounds": [[float(lats.min()), float(lons.min())], [float(lats.max()), float(lons.max())]],
-        "updated": datetime.now(timezone.utc).isoformat()
-    }
-    
-    with open(os.path.join(OUTPUT_DIR, 'metadata.json'), 'w') as f:
-        json.dump(metadata, f)
-    
-    print("Files in data directory:", os.listdir(OUTPUT_DIR))
+    # Final Verification
+    print("\n--- FINAL CONTENT OF DATA DIR ---")
+    print(list(DATA_DIR.glob('*')))
 
 if __name__ == "__main__":
     main()

@@ -29,23 +29,24 @@ jobs:
             eccodes
             numpy
 
-      - name: Run Processing Script
+      - name: Run Script
         shell: bash -l {0}
-        run: python process_rtma.py
+        run: |
+          # Explicitly tell python where eccodes is (Fixes 'library not found' errors)
+          export ECCODES_DEFINITION_PATH=$CONDA_PREFIX/share/eccodes/definitions
+          
+          # Run the script
+          python process_rtma.py
 
-      # --- IMPORTANT FIXES START HERE ---
-      
-      # 1. Disable Jekyll processing (fixes 404s on _underscored files or certain folders)
+      # Debugging: List files to ensure they exist before we try to deploy
+      - name: Verify Output
+        run: |
+          echo "Checking site/data folder..."
+          ls -R site/
+
       - name: Add .nojekyll
         run: touch site/.nojekyll
 
-      # 2. Debugging: Show us exactly what exists before we deploy
-      - name: Verify Files
-        run: |
-          echo "Listing site directory:"
-          ls -R site/
-
-      # 3. Deploy
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:

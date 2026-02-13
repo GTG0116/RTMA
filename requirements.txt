@@ -1,0 +1,7 @@
+xarray
+cfgrib
+matplotlib
+boto3
+numpy
+scipy
+eccodes

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live RTMA Weather Viewer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100vw; height: 100vh; background: #222; }
+        .legend {
+            background: white; padding: 10px; border-radius: 5px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2); font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    // Initialize Map
+    var map = L.map('map').setView([39.8283, -98.5795], 4);
+
+    // Base Layer (Dark matter for contrast)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 19
+    }).addTo(map);
+
+    // Layer Groups
+    var layers = {
+        "Temperature": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7}),
+        "Wind Speed": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7}),
+        "Wind Gusts": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7}),
+        "Feels Like": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.7})
+    };
+
+    // Load Metadata and Update Layers
+    fetch('data/metadata.json')
+        .then(response => response.json())
+        .then(meta => {
+            var bounds = meta.bounds; // [[minLat, minLon], [maxLat, maxLon]]
+            
+            // RTMA files usually run South->North, West->East, but image overlay needs
+            // TopLeft to BottomRight.
+            // Note: The Python script output the image "upper" origin.
+            // We set bounds: [[South, West], [North, East]]
+            var imageBounds = [[bounds[0][0], bounds[0][1]], [bounds[1][0], bounds[1][1]]];
+
+            // Update Image Sources
+            layers["Temperature"].setUrl('data/temp.png').setBounds(imageBounds).addTo(map);
+            layers["Wind Speed"].setUrl('data/wind.png').setBounds(imageBounds);
+            layers["Wind Gusts"].setUrl('data/gust.png').setBounds(imageBounds);
+            layers["Feels Like"].setUrl('data/feel.png').setBounds(imageBounds);
+
+            // Add Layer Control
+            L.control.layers(null, layers).addTo(map);
+            
+            console.log("Data loaded from: " + meta.timestamp);
+        })
+        .catch(err => console.error("Error loading metadata:", err));
+
+</script>
+</body>
+</html>

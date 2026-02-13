@@ -32,10 +32,7 @@ jobs:
       - name: Run Script
         shell: bash -l {0}
         run: |
-          # Explicitly tell python where eccodes is (Fixes 'library not found' errors)
           export ECCODES_DEFINITION_PATH=$CONDA_PREFIX/share/eccodes/definitions
-          
-          # Run the script
           python process_rtma.py
 
       # Debugging: List files to ensure they exist before we try to deploy

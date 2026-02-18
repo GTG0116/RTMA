@@ -269,10 +269,20 @@
 <script>
     var currentOpacity = 0.65;
 
-    // Create map — zoom animation disabled to prevent image disappear glitch on zoom
     var map = L.map('map', {
         center: [39.8283, -98.5795],
         zoom: 4,
+
+        zoomControl: false,
+        wheelDebounceTime: 40
+    });
+
+    map.createPane('rtmaPane');
+    map.getPane('rtmaPane').style.zIndex = 300;
+    // Opt the custom pane into Leaflet's CSS zoom animation so the overlay
+    // smoothly scales with the tiles instead of snapping after each step.
+    map.getPane('rtmaPane').classList.add('leaflet-zoom-animated');
+=======
         zoomControl: false
     });
 

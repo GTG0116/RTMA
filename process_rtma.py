@@ -27,7 +27,7 @@ def save_image(data, name, cmap, vmin, vmax):
     ax.set_axis_off()
     fig.add_axes(ax)
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    ax.imshow(data, cmap=cmap, norm=norm, origin='upper', aspect='auto')
+    ax.imshow(data, cmap=cmap, norm=norm, origin='lower', aspect='auto')
    
     plt.savefig(output_path, transparent=True, pad_inches=0, format='png', dpi=150)
     plt.close(fig)
@@ -84,10 +84,17 @@ def main():
                 processed_vars.append('temp')
                
                 # Use this dataset for metadata (lat/lon)
+                min_lat = float(ds.latitude.min())
+                max_lat = float(ds.latitude.max())
+                min_lon = float(ds.longitude.min())
+                max_lon = float(ds.longitude.max())
+                if min_lon > 180:
+                    min_lon -= 360
+                    max_lon -= 360
                 meta = {
                     "timestamp": data_timestamp,
-                    "bounds": [[float(ds.latitude.min()), float(ds.longitude.min())],
-                               [float(ds.latitude.max()), float(ds.longitude.max())]]
+                    "bounds": [[min_lat, min_lon],
+                               [max_lat, max_lon]]
                 }
                 with open(os.path.join(DATA_DIR, 'metadata.json'), 'w') as f:
                     json.dump(meta, f)
@@ -109,10 +116,17 @@ def main():
     # If meta not saved but other vars processed, save meta from first ds
     if not meta_saved and datasets:
         ds = datasets[0]
+        min_lat = float(ds.latitude.min())
+        max_lat = float(ds.latitude.max())
+        min_lon = float(ds.longitude.min())
+        max_lon = float(ds.longitude.max())
+        if min_lon > 180:
+            min_lon -= 360
+            max_lon -= 360
         meta = {
             "timestamp": data_timestamp,
-            "bounds": [[float(ds.latitude.min()), float(ds.longitude.min())],
-                       [float(ds.latitude.max()), float(ds.longitude.max())]]
+            "bounds": [[min_lat, min_lon],
+                       [max_lat, max_lon]]
         }
         with open(os.path.join(DATA_DIR, 'metadata.json'), 'w') as f:
             json.dump(meta, f)

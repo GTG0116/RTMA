@@ -9,6 +9,26 @@
         #status { position: absolute; top: 10px; left: 10px; z-index: 1000; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 6px; pointer-events: none; }
         #controls { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 6px; }
         label { display: block; margin: 6px 0; cursor: pointer; }
+        .legend { 
+            background: rgba(0,0,0,0.7); 
+            padding: 10px; 
+            border-radius: 6px; 
+            line-height: 18px; 
+            color: white; 
+        }
+        .legend i { 
+            width: 18px; 
+            height: 18px; 
+            float: left; 
+            margin-right: 8px; 
+            opacity: 0.7; 
+        }
+        .legend .gradient {
+            height: 10px;
+            margin: 8px 0;
+            background: linear-gradient(to right, #00008B, #001EFF, #00FFFF, #7CFF00, #FFFF00, #FF7F00, #FF0000);
+        }
+        .legend .labels { display: flex; justify-content: space-between; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -19,65 +39,114 @@
     <strong>Overlay:</strong><br>
     <label><input type="radio" name="layer" value="temp" checked> Temperature</label>
     <label><input type="radio" name="layer" value="wind"> Wind Speed</label>
-    <label><input type="radio" name="layer" value="gust"> Wind Gusts</label>
+    <label><input type="radio" name="layer" value="apparent"> Apparent Temperature</label>
     <label><input type="radio" name="layer" value="none"> None</label>
+</div>
+
+<div class="legend" id="legend" style="position: absolute; bottom: 30px; left: 10px; z-index: 1000; min-width: 200px; display: none;">
+    <div id="legend-title"><strong>Temperature (°F)</strong></div>
+    <div class="gradient" id="legend-gradient"></div>
+    <div class="labels">
+        <span id="min-label">-40</span>
+        <span id="max-label">140</span>
+    </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    const map = L.map('map').setView([39.8283, -98.5795], 4);
-    const statusDiv = document.getElementById('status');
+// Create custom pane BELOW tile labels but above nothing else
+var map = L.map('map', {
+    center: [39.8283, -98.5795],
+    zoom: 4,
+    // Ensure default panes exist
+});
 
-    // Dark basemap
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap, &copy; CARTO',
-        subdomains: 'abcd',
-        maxZoom: 19
-    }).addTo(map);
+// Create a custom pane for image overlays (lower than tilePane)
+map.createPane('rtmaPane');
+map.getPane('rtmaPane').style.zIndex = 400;  // tilePane is 200, overlayPane 400, so set lower than tilePane? Wait - actually tilePane=200, shadow=300, overlay=400, marker=600, popup=700
+// Correction: to put image BELOW tiles (so labels show on top), put image in a pane with zIndex < 200
+map.getPane('rtmaPane').style.zIndex = 150;  // below tilePane (200)
 
-    // Layers (start hidden)
-    const layers = {
-        temp: L.imageOverlay("./data/temp.png", [[0,0],[0,0]], { opacity: 0.65 }).addTo(map),
-        wind: L.imageOverlay("./data/wind.png", [[0,0],[0,0]], { opacity: 0.65 }),
-        gust: L.imageOverlay("./data/gust.png", [[0,0],[0,0]], { opacity: 0.65 })
-    };
+var statusDiv = document.getElementById('status');
+var legendDiv = document.getElementById('legend');
 
-    // Radio button control
-    document.querySelectorAll('input[name="layer"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            Object.values(layers).forEach(l => {
-                if (map.hasLayer(l)) map.removeLayer(l);
-            });
-            const val = radio.value;
-            if (val !== 'none' && layers[val]) {
-                layers[val].addTo(map).bringToFront();
-            }
+// Mapbox Dark basemap (labels & borders will be on tilePane, above our custom pane)
+L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token={accessToken}', {
+    attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+    maxZoom: 18,
+    tileSize: 512,
+    zoomOffset: -1,
+    accessToken: 'pk.eyJ1IjoiZ3RnMDExNiIsImEiOiJjbWxsODV6NXAwNThmM2ZwdWlkYm0xNjFlIn0.vI186twXYzY45nnuV5FucQ'  // ← Replace this!
+}).addTo(map);
+
+// Layers (added to custom low pane so labels appear above)
+const layers = {
+    temp: L.imageOverlay("./data/temp.png", [[0,0],[0,0]], { opacity: 0.65, pane: 'rtmaPane' }).addTo(map),
+    wind: L.imageOverlay("./data/wind.png", [[0,0],[0,0]], { opacity: 0.65, pane: 'rtmaPane' }),
+    apparent: L.imageOverlay("./data/apparent.png", [[0,0],[0,0]], { opacity: 0.65, pane: 'rtmaPane' })
+};
+
+// Legend configs per layer
+const legendConfigs = {
+    temp: { title: "Temperature (°F)", min: -20, max: 110, cmap: 'turbo' },
+    wind: { title: "Wind Speed (mph)", min: 0, max: 60, cmap: 'viridis' },
+    apparent: { title: "Apparent Temperature (°F)", min: -40, max: 140, cmap: 'turbo' }
+};
+
+// Function to update legend
+function updateLegend(layerName) {
+    if (layerName === 'none') {
+        legendDiv.style.display = 'none';
+        return;
+    }
+    const cfg = legendConfigs[layerName];
+    document.getElementById('legend-title').innerHTML = `<strong>${cfg.title}</strong>`;
+    document.getElementById('min-label').textContent = cfg.min;
+    document.getElementById('max-label').textContent = cfg.max;
+    
+    // Simple turbo-like gradient (you can refine colors if needed)
+    const gradient = document.getElementById('legend-gradient');
+    gradient.style.background = 'linear-gradient(to right, #30123b, #3c59ff, #00ffff, #7cff00, #ffff00, #ff7f00, #ff0000)';
+    
+    legendDiv.style.display = 'block';
+}
+
+// Radio control
+document.querySelectorAll('input[name="layer"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+        Object.values(layers).forEach(l => {
+            if (map.hasLayer(l)) map.removeLayer(l);
         });
+        const val = radio.value;
+        if (val !== 'none' && layers[val]) {
+            layers[val].addTo(map);
+        }
+        updateLegend(val);
     });
+});
 
-    fetch('./data/metadata.json')
-        .then(response => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response.json();
-        })
-        .then(meta => {
-            const ts = new Date(meta.timestamp).toLocaleString();
-            statusDiv.innerHTML = `Data Timestamp: ${ts}<br>Bounds loaded.`;
+fetch('./data/metadata.json')
+    .then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+    })
+    .then(meta => {
+        const ts = new Date(meta.timestamp).toLocaleString();
+        statusDiv.innerHTML = `Data Timestamp: ${ts}<br>Bounds loaded.`;
 
-            const b = meta.bounds;
-            const imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
+        const b = meta.bounds;
+        const imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
 
-            // Set bounds for all layers
-            Object.values(layers).forEach(layer => layer.setBounds(imageBounds));
+        Object.values(layers).forEach(layer => layer.setBounds(imageBounds));
 
-            // Ensure temp is visible initially
-            layers.temp.bringToFront();
-        })
-        .catch(err => {
-            console.error(err);
-            statusDiv.innerHTML = `Error: ${err.message}<br>Check console / data folder.`;
-            statusDiv.style.background = "rgba(200,0,0,0.8)";
-        });
+        // Initial legend for temp
+        updateLegend('temp');
+    })
+    .catch(err => {
+        console.error(err);
+        statusDiv.innerHTML = `Error: ${err.message}<br>Check console / data folder.`;
+        statusDiv.style.background = "rgba(200,0,0,0.8)";
+    });
 </script>
 </body>
 </html>

@@ -200,8 +200,19 @@
         }
 
         // ── Map load ─────────────────────────────────────────────────────────────
+        function getFirstLabelLayerId() {
+            const layers = map.getStyle().layers;
+            for (const layer of layers) {
+                if (layer.type === 'symbol' && layer.id.toLowerCase().includes('label')) {
+                    return layer.id;
+                }
+            }
+            return undefined; // fall back: insert on top
+        }
+
         map.on('load', () => {
             const coords = toMapboxCoords(boundsArr);
+            const beforeId = getFirstLabelLayerId();
 
             ALL_LAYERS.forEach(name => {
                 map.addSource(name + '-src', {
@@ -216,7 +227,7 @@
                     source: name + '-src',
                     paint: { 'raster-opacity': 0.65 },
                     layout: { visibility: 'none' }   // all hidden at first
-                }, 'settlement-label');
+                }, beforeId);
             });
 
             if (pendingBounds) {

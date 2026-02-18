@@ -6,55 +6,77 @@
     <style>
         body { margin: 0; padding: 0; background: #222; color: white; font-family: sans-serif; }
         #map { width: 100vw; height: 100vh; }
-        #status { position: absolute; top: 10px; left: 50px; z-index: 1000; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px; pointer-events: none; }
+        #status { position: absolute; top: 10px; left: 10px; z-index: 1000; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 6px; pointer-events: none; }
+        #controls { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 6px; }
+        label { display: block; margin: 6px 0; cursor: pointer; }
     </style>
 </head>
 <body>
-
 <div id="status">Loading data...</div>
 <div id="map"></div>
 
+<div id="controls">
+    <strong>Overlay:</strong><br>
+    <label><input type="radio" name="layer" value="temp" checked> Temperature</label>
+    <label><input type="radio" name="layer" value="wind"> Wind Speed</label>
+    <label><input type="radio" name="layer" value="gust"> Wind Gusts</label>
+    <label><input type="radio" name="layer" value="none"> None</label>
+</div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    var map = L.map('map').setView([39.8283, -98.5795], 4);
-    var statusDiv = document.getElementById('status');
+    const map = L.map('map').setView([39.8283, -98.5795], 4);
+    const statusDiv = document.getElementById('status');
 
+    // Dark basemap
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap, &copy; CARTO',
         subdomains: 'abcd',
         maxZoom: 19
     }).addTo(map);
 
-    var layers = {
-        "Temperature": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.6}),
-        "Wind Speed": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.6}),
-        "Wind Gusts": L.imageOverlay("", [[0,0],[0,0]], {opacity: 0.6})
+    // Layers (start hidden)
+    const layers = {
+        temp: L.imageOverlay("./data/temp.png", [[0,0],[0,0]], { opacity: 0.65 }).addTo(map),
+        wind: L.imageOverlay("./data/wind.png", [[0,0],[0,0]], { opacity: 0.65 }),
+        gust: L.imageOverlay("./data/gust.png", [[0,0],[0,0]], { opacity: 0.65 })
     };
 
-    // Use relative path - this assumes index.html and data/ are siblings
+    // Radio button control
+    document.querySelectorAll('input[name="layer"]').forEach(radio => {
+        radio.addEventListener('change', () => {
+            Object.values(layers).forEach(l => {
+                if (map.hasLayer(l)) map.removeLayer(l);
+            });
+            const val = radio.value;
+            if (val !== 'none' && layers[val]) {
+                layers[val].addTo(map).bringToFront();
+            }
+        });
+    });
+
     fetch('./data/metadata.json')
         .then(response => {
-            if (!response.ok) throw new Error("HTTP " + response.status);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return response.json();
         })
         .then(meta => {
-            statusDiv.innerHTML = "Data Timestamp: " + new Date(meta.timestamp).toLocaleString();
-            
-            // Fix bounds: [[South, West], [North, East]]
-            var b = meta.bounds; 
-            var imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
+            const ts = new Date(meta.timestamp).toLocaleString();
+            statusDiv.innerHTML = `Data Timestamp: ${ts}<br>Bounds loaded.`;
 
-            // Add layers
-            layers["Temperature"].setUrl('./data/temp.png').setBounds(imageBounds).addTo(map);
-            layers["Wind Speed"].setUrl('./data/wind.png').setBounds(imageBounds);
-            layers["Wind Gusts"].setUrl('./data/gust.png').setBounds(imageBounds);
+            const b = meta.bounds;
+            const imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
 
-            L.control.layers(null, layers).addTo(map);
+            // Set bounds for all layers
+            Object.values(layers).forEach(layer => layer.setBounds(imageBounds));
+
+            // Ensure temp is visible initially
+            layers.temp.bringToFront();
         })
         .catch(err => {
             console.error(err);
-            statusDiv.innerHTML = "Error loading data: " + err.message + "<br>Check console for details.";
-            statusDiv.style.background = "rgba(200, 0, 0, 0.8)";
+            statusDiv.innerHTML = `Error: ${err.message}<br>Check console / data folder.`;
+            statusDiv.style.background = "rgba(200,0,0,0.8)";
         });
 </script>
 </body>

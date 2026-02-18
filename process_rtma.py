@@ -60,7 +60,7 @@ def save_image(data, name, cmap, vmin, vmax):
     ax.set_axis_off()
     fig.add_axes(ax)
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    ax.imshow(data, cmap=cmap, norm=norm, origin='upper', aspect='auto')
+    ax.imshow(data, cmap=cmap, norm=norm, origin='lower', aspect='auto')
     
     plt.savefig(output_path, transparent=True, pad_inches=0, format='png', dpi=dpi)
     plt.close(fig)

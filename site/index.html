@@ -141,6 +141,43 @@
             font-size: 11px; color: #64748b;
         }
 
+        /* ===== VALUE POPUP ===== */
+        .value-popup .leaflet-popup-content-wrapper {
+            background: rgba(6, 18, 52, 0.88);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(100, 160, 255, 0.25);
+            border-radius: 10px;
+            box-shadow: 0 6px 24px rgba(0,0,50,0.6);
+            color: #e0f0ff;
+            padding: 0;
+        }
+        .value-popup .leaflet-popup-content {
+            margin: 10px 14px;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+        .value-popup .leaflet-popup-tip-container { display: none; }
+        .value-popup .leaflet-popup-close-button {
+            color: #60a5fa !important; font-size: 16px;
+            top: 4px; right: 6px;
+        }
+        .popup-layer-name {
+            font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+            text-transform: uppercase; color: #60a5fa; margin-bottom: 3px;
+        }
+        .popup-value {
+            font-size: 20px; font-weight: 700;
+            background: linear-gradient(135deg, #93c5fd, #818cf8);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .popup-coords {
+            font-size: 10px; color: #475569; margin-top: 3px;
+        }
+        .popup-unavailable {
+            font-size: 13px; color: #64748b; font-style: italic;
+        }
+
         /* ===== LEAFLET OVERRIDES ===== */
         .leaflet-control-zoom { display: none; }
         .leaflet-control-attribution {
@@ -189,6 +226,21 @@
         <span class="layer-label">Apparent Temp</span>
     </label>
     <label class="layer-option">
+        <input type="radio" name="layer" value="vis">
+        <span class="radio-dot"></span>
+        <span class="layer-label">Visibility</span>
+    </label>
+    <label class="layer-option">
+        <input type="radio" name="layer" value="cloud">
+        <span class="radio-dot"></span>
+        <span class="layer-label">Cloud Cover</span>
+    </label>
+    <label class="layer-option">
+        <input type="radio" name="layer" value="rh">
+        <span class="radio-dot"></span>
+        <span class="layer-label">Rel. Humidity</span>
+    </label>
+    <label class="layer-option">
         <input type="radio" name="layer" value="none">
         <span class="radio-dot"></span>
         <span class="layer-label">None</span>
@@ -224,23 +276,45 @@
         zoomControl: false
     });
 
-    // BUG FIX: pane zIndex must be ABOVE tilePane (200), not below it.
-    // Previously set to 150, which caused the tile layer to completely cover
-    // the weather images — making them invisible on the map.
+    // Layer z-index stack:
+    //   basemapPane  (z=200) — dark base tiles WITHOUT labels/borders
+    //   rtmaPane     (z=300) — RTMA weather image overlays
+    //   labelsPane   (z=400) — label/border tiles ON TOP of weather data
+
+    // basemapPane: below the default tilePane (200) so we use 150
+    map.createPane('basemapPane');
+    map.getPane('basemapPane').style.zIndex = 150;
+    // Prevent basemap pane from capturing pointer events (let clicks pass through)
+    map.getPane('basemapPane').style.pointerEvents = 'none';
+
+    // rtmaPane: above basemap, below labels
     map.createPane('rtmaPane');
     map.getPane('rtmaPane').style.zIndex = 300;
+    map.getPane('rtmaPane').style.pointerEvents = 'none';
+
+    // labelsPane: above everything so town names / borders are always visible
+    map.createPane('labelsPane');
+    map.getPane('labelsPane').style.zIndex = 400;
+    map.getPane('labelsPane').style.pointerEvents = 'none';
 
     var statusDiv  = document.getElementById('status');
     var statusText = document.getElementById('status-text');
     var legendDiv  = document.getElementById('legend');
 
-    // Mapbox Dark v11 basemap
-    L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token={accessToken}', {
-        attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors | &copy; <a href="https://www.mapbox.com/">Mapbox</a>',
-        maxZoom: 18,
-        tileSize: 512,
-        zoomOffset: -1,
-        accessToken: 'pk.eyJ1IjoiZ3RnMDExNiIsImEiOiJjbWxsODV6NXAwNThmM2ZwdWlkYm0xNjFlIn0.vI186twXYzY45nnuV5FucQ'
+    // CartoDB dark basemap WITHOUT labels (z=150, beneath RTMA data)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 19,
+        pane: 'basemapPane'
+    }).addTo(map);
+
+    // CartoDB dark labels ONLY (z=400, on top of RTMA data so town names/borders show)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png', {
+        attribution: '',
+        subdomains: 'abcd',
+        maxZoom: 19,
+        pane: 'labelsPane'
     }).addTo(map);
 
     // BUG FIX: use approximate CONUS bounds as defaults instead of [[0,0],[0,0]].
@@ -248,22 +322,30 @@
     // until metadata loads. Defaulting to CONUS bounds means images render
     // immediately (slightly approximate) while metadata fetch is in-flight.
     var defaultBounds = [[24.0, -126.0], [50.0, -66.0]];
+    var imageBounds = defaultBounds;  // will be updated after metadata loads
 
     var layers = {
         temp:     L.imageOverlay('./data/temp.png',     defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
         wind:     L.imageOverlay('./data/wind.png',     defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
-        apparent: L.imageOverlay('./data/apparent.png', defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false })
+        apparent: L.imageOverlay('./data/apparent.png', defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
+        vis:      L.imageOverlay('./data/vis.png',      defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
+        cloud:    L.imageOverlay('./data/cloud.png',    defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
+        rh:       L.imageOverlay('./data/rh.png',       defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false })
     };
 
     var legendConfigs = {
-        temp:     { title: 'Temperature (°F)',        min: -20, max: 110, gradient: 'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)' },
-        wind:     { title: 'Wind Speed (mph)',         min: 0,   max: 60,  gradient: 'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)' },
-        apparent: { title: 'Apparent Temperature (°F)', min: -40, max: 140, gradient: 'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)' }
+        temp:     { title: 'Temperature (°F)',          min: -20, max: 110,  gradient: 'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit: '°F' },
+        wind:     { title: 'Wind Speed (mph)',           min: 0,   max: 60,   gradient: 'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)',                  unit: ' mph' },
+        apparent: { title: 'Apparent Temperature (°F)', min: -40, max: 140,  gradient: 'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit: '°F' },
+        vis:      { title: 'Visibility (miles)',         min: 0,   max: 10,   gradient: 'linear-gradient(to right,#0d0221,#3e0072,#9b00c4,#e8007a,#ff6b00,#fffb00)',           unit: ' mi' },
+        cloud:    { title: 'Cloud Cover (%)',            min: 0,   max: 100,  gradient: 'linear-gradient(to right,#f7fbff,#c6dbef,#6baed6,#2171b5,#084594)',                  unit: '%' },
+        rh:       { title: 'Relative Humidity (%)',     min: 0,   max: 100,  gradient: 'linear-gradient(to right,#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58)',                  unit: '%' }
     };
 
     function updateLegend(layerName) {
         if (layerName === 'none') { legendDiv.style.display = 'none'; return; }
         var cfg = legendConfigs[layerName];
+        if (!cfg) { legendDiv.style.display = 'none'; return; }
         document.getElementById('legend-title').textContent    = cfg.title;
         document.getElementById('min-label').textContent       = cfg.min;
         document.getElementById('max-label').textContent       = cfg.max;
@@ -282,6 +364,7 @@
         });
         if (val !== 'none' && layers[val]) layers[val].addTo(map);
         updateLegend(val);
+        loadLayerData(val);
     }
 
     // Layer radio buttons
@@ -297,6 +380,107 @@
         opacityLabel.textContent = opacitySlider.value + '%';
         Object.values(layers).forEach(function(l) { l.setOpacity(currentOpacity); });
     });
+
+    // ===== INTERACTIVE VALUE LOOKUP =====
+    // Binary data files are saved by process_rtma.py as row-major float32 (little-endian).
+    // Row 0 = southernmost latitude (matches matplotlib imshow origin='lower').
+    var dataCache = {};       // layerName → Float32Array
+    var dataMeta = null;      // { rows, cols } of the downsampled grid
+    var valuePopup = null;
+
+    function loadLayerData(layerName) {
+        if (layerName === 'none' || !dataMeta || !dataMeta.data_rows) return;
+        if (dataCache[layerName]) return;  // already loaded
+        fetch('./data/' + layerName + '_data.bin')
+            .then(function(r) {
+                if (!r.ok) throw new Error('No data file for ' + layerName);
+                return r.arrayBuffer();
+            })
+            .then(function(buf) {
+                dataCache[layerName] = new Float32Array(buf);
+            })
+            .catch(function() {
+                // Data file not available for this layer (e.g. vis/cloud not in GRIB)
+            });
+    }
+
+    function lookupValue(layerName, latlng) {
+        var arr = dataCache[layerName];
+        if (!arr || !dataMeta || !dataMeta.data_rows) return null;
+
+        var rows = dataMeta.data_rows;
+        var cols = dataMeta.data_cols;
+        var b = imageBounds;
+        var minLat = b[0][0], maxLat = b[1][0];
+        var minLon = b[0][1], maxLon = b[1][1];
+
+        var rowFrac = (latlng.lat - minLat) / (maxLat - minLat);
+        var colFrac = (latlng.lng - minLon) / (maxLon - minLon);
+
+        // Clamp to valid range
+        if (rowFrac < 0 || rowFrac > 1 || colFrac < 0 || colFrac > 1) return null;
+
+        var row = Math.min(rows - 1, Math.max(0, Math.round(rowFrac * (rows - 1))));
+        var col = Math.min(cols - 1, Math.max(0, Math.round(colFrac * (cols - 1))));
+        var val = arr[row * cols + col];
+
+        if (!isFinite(val) || isNaN(val)) return null;
+        return val;
+    }
+
+    function formatValue(layerName, val) {
+        var cfg = legendConfigs[layerName];
+        if (!cfg) return val.toFixed(1);
+        if (layerName === 'temp' || layerName === 'apparent') return val.toFixed(1) + cfg.unit;
+        if (layerName === 'wind') return val.toFixed(1) + cfg.unit;
+        if (layerName === 'vis')  return val.toFixed(2) + cfg.unit;
+        if (layerName === 'cloud' || layerName === 'rh') return Math.round(val) + cfg.unit;
+        return val.toFixed(1) + (cfg.unit || '');
+    }
+
+    // Double-click / double-tap: show exact value at cursor
+    map.on('dblclick', function(e) {
+        // Prevent default map zoom on dblclick
+        e.originalEvent.preventDefault();
+
+        var layerName = getSelectedLayer();
+        var cfg = legendConfigs[layerName];
+
+        if (valuePopup) {
+            map.closePopup(valuePopup);
+            valuePopup = null;
+        }
+
+        var val = lookupValue(layerName, e.latlng);
+        var contentHtml;
+
+        if (layerName === 'none') {
+            return;  // nothing to show
+        } else if (val !== null) {
+            contentHtml =
+                '<div class="popup-layer-name">' + (cfg ? cfg.title : layerName) + '</div>' +
+                '<div class="popup-value">' + formatValue(layerName, val) + '</div>' +
+                '<div class="popup-coords">' +
+                    e.latlng.lat.toFixed(3) + '°, ' + e.latlng.lng.toFixed(3) + '°' +
+                '</div>';
+        } else {
+            // Data not loaded yet or out of bounds
+            contentHtml =
+                '<div class="popup-layer-name">' + (cfg ? cfg.title : layerName) + '</div>' +
+                '<div class="popup-unavailable">Data not available</div>' +
+                '<div class="popup-coords">' +
+                    e.latlng.lat.toFixed(3) + '°, ' + e.latlng.lng.toFixed(3) + '°' +
+                '</div>';
+        }
+
+        valuePopup = L.popup({ className: 'value-popup', closeButton: true, autoClose: true })
+            .setLatLng(e.latlng)
+            .setContent(contentHtml)
+            .openOn(map);
+    });
+
+    // Disable the default dblclick zoom so our handler works cleanly
+    map.doubleClickZoom.disable();
 
     // Show the default layer immediately so images attempt to load right away
     showLayer(getSelectedLayer());
@@ -315,10 +499,17 @@
                 '<span style="color:#22c55e;font-weight:600">Live</span> &mdash; ' + ts;
 
             var b = meta.bounds;
-            var imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
+            imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
             Object.values(layers).forEach(function(layer) {
                 layer.setBounds(imageBounds);
             });
+
+            // Store grid shape for interactive lookup
+            if (meta.data_rows && meta.data_cols) {
+                dataMeta = { data_rows: meta.data_rows, data_cols: meta.data_cols };
+                // Pre-load data for whichever layer is already shown
+                loadLayerData(getSelectedLayer());
+            }
 
             // BUG FIX: re-show whichever layer the user currently has selected,
             // rather than unconditionally adding layers.temp regardless of selection.

@@ -142,9 +142,7 @@
         }
 
         /* ===== VALUE POPUP ===== */
-        .mapboxgl-popup {
-            z-index: 1001;
-        }
+        .mapboxgl-popup { z-index: 1001; }
         .mapboxgl-popup-content {
             background: rgba(6, 18, 52, 0.88);
             backdrop-filter: blur(16px);
@@ -156,10 +154,7 @@
             padding: 10px 14px;
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
         }
-        .mapboxgl-popup-close-button {
-            color: #60a5fa !important;
-            font-size: 16px;
-        }
+        .mapboxgl-popup-close-button { color: #60a5fa !important; font-size: 16px; }
         .popup-layer-name {
             font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
             text-transform: uppercase; color: #60a5fa; margin-bottom: 3px;
@@ -170,12 +165,8 @@
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-        .popup-coords {
-            font-size: 10px; color: #475569; margin-top: 3px;
-        }
-        .popup-unavailable {
-            font-size: 13px; color: #64748b; font-style: italic;
-        }
+        .popup-coords { font-size: 10px; color: #475569; margin-top: 3px; }
+        .popup-unavailable { font-size: 13px; color: #64748b; font-style: italic; }
 
         /* ===== MAPBOX GL OVERRIDES ===== */
         .mapboxgl-ctrl-logo { display: none; }
@@ -259,21 +250,24 @@
 
 <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
 <script>
-    // Set Mapbox access token
     mapboxgl.accessToken = 'pk.eyJ1IjoiZ3RnMDExNiIsImEiOiJjbWxsODV6NXAwNThmM2ZwdWlkYm0xNjFlIn0.vI186twXYzY45nnuV5FucQ';
 
     var currentOpacity = 0.65;
-    var defaultBounds = [[24.0, -126.0], [50.0, -66.0]];
-    var imageBounds = defaultBounds;
 
-    // Initialize Mapbox GL map
-    var map = new mapboxgl.Map({
-        container: 'map',
-        style: 'mapbox://styles/mapbox/dark-v11',
-        center: [-98.5795, 39.8283],
-        zoom: 4,
-        preserveDrawingBuffer: false
-    });
+    // Bounds stored as [minLat, minLon, maxLat, maxLon] internally.
+    // Mapbox GL image sources require 4-corner coords: [NW, NE, SE, SW] as [lng, lat].
+    var boundsArr = [24.0, -126.0, 50.0, -66.0]; // [minLat, minLon, maxLat, maxLon]
+
+    // Convert boundsArr → Mapbox GL 4-corner format [NW, NE, SE, SW]
+    function toMapboxCoords(b) {
+        var minLat = b[0], minLon = b[1], maxLat = b[2], maxLon = b[3];
+        return [
+            [minLon, maxLat], // NW  top-left
+            [maxLon, maxLat], // NE  top-right
+            [maxLon, minLat], // SE  bottom-right
+            [minLon, minLat]  // SW  bottom-left
+        ];
+    }
 
     var statusDiv  = document.getElementById('status');
     var statusText = document.getElementById('status-text');
@@ -288,212 +282,213 @@
         rh:       { title: 'Relative Humidity (%)',     min: 0,   max: 100,  gradient: 'linear-gradient(to right,#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58)',                  unit: '%' }
     };
 
-    // When map is loaded, add the image sources and layers
-    map.on('load', function() {
-        // Add image sources for each weather variable (will use these for display)
-        var layerNames = ['temp', 'wind', 'apparent', 'vis', 'cloud', 'rh'];
+    var ALL_LAYERS = ['temp', 'wind', 'apparent', 'vis', 'cloud', 'rh'];
 
-        layerNames.forEach(function(name) {
-            map.addSource(name + '-image', {
+    // ── Map init ──────────────────────────────────────────────────────────────
+    var map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/dark-v11',
+        center: [-98.5795, 39.8283],
+        zoom: 4
+    });
+
+    // Once the Mapbox style is fully loaded, add RTMA image sources + layers.
+    // Each layer is inserted BEFORE 'settlement-label' so Mapbox renders town
+    // names and admin borders on top of the weather data automatically.
+    map.on('load', function () {
+        var coords = toMapboxCoords(boundsArr);
+
+        ALL_LAYERS.forEach(function (name) {
+            map.addSource(name + '-src', {
                 type: 'image',
                 url: './data/' + name + '.png',
-                coordinates: imageBounds
+                coordinates: coords
             });
 
             map.addLayer({
-                id: name + '-overlay',
+                id: name + '-layer',
                 type: 'raster',
-                source: name + '-image',
-                paint: { 'raster-opacity': currentOpacity }
-            }, 'settlement-label'); // Insert BEFORE labels, so labels appear on top
+                source: name + '-src',
+                paint: { 'raster-opacity': currentOpacity },
+                layout: { visibility: name === 'temp' ? 'visible' : 'none' }
+            }, 'settlement-label'); // INSERT BEFORE labels → labels render on top
         });
 
-        // Initially hide all layers except temp
-        layerNames.forEach(function(name) {
-            if (name !== 'temp') {
-                map.setLayoutProperty(name + '-overlay', 'visibility', 'none');
-            }
-        });
+        // If metadata already arrived before the style loaded, apply it now
+        if (pendingBounds) {
+            applyBounds(pendingBounds);
+            pendingBounds = null;
+        }
+        if (pendingLayer) {
+            showLayer(pendingLayer);
+            pendingLayer = null;
+        }
     });
 
-    function updateLegend(layerName) {
-        if (layerName === 'none') { legendDiv.style.display = 'none'; return; }
-        var cfg = legendConfigs[layerName];
-        if (!cfg) { legendDiv.style.display = 'none'; return; }
-        document.getElementById('legend-title').textContent    = cfg.title;
-        document.getElementById('min-label').textContent       = cfg.min;
-        document.getElementById('max-label').textContent       = cfg.max;
+    // ── Legend ────────────────────────────────────────────────────────────────
+    function updateLegend(name) {
+        if (name === 'none' || !legendConfigs[name]) { legendDiv.style.display = 'none'; return; }
+        var cfg = legendConfigs[name];
+        document.getElementById('legend-title').textContent = cfg.title;
+        document.getElementById('min-label').textContent    = cfg.min;
+        document.getElementById('max-label').textContent    = cfg.max;
         document.getElementById('legend-gradient').style.background = cfg.gradient;
         legendDiv.style.display = 'block';
     }
 
     function getSelectedLayer() {
-        var checked = document.querySelector('input[name="layer"]:checked');
-        return checked ? checked.value : 'temp';
+        var el = document.querySelector('input[name="layer"]:checked');
+        return el ? el.value : 'temp';
     }
 
+    // ── Layer switching ───────────────────────────────────────────────────────
+    var pendingLayer = null; // set when map style not yet loaded
+
     function showLayer(val) {
-        var layerNames = ['temp', 'wind', 'apparent', 'vis', 'cloud', 'rh'];
-        layerNames.forEach(function(name) {
-            var visibility = (name === val) ? 'visible' : 'none';
-            if (map.getLayer(name + '-overlay')) {
-                map.setLayoutProperty(name + '-overlay', 'visibility', visibility);
-            }
+        if (!map.isStyleLoaded()) { pendingLayer = val; updateLegend(val); loadLayerData(val); return; }
+        ALL_LAYERS.forEach(function (name) {
+            map.setLayoutProperty(name + '-layer', 'visibility', name === val ? 'visible' : 'none');
         });
         updateLegend(val);
         loadLayerData(val);
     }
 
-    // Layer radio buttons
-    document.querySelectorAll('input[name="layer"]').forEach(function(radio) {
-        radio.addEventListener('change', function() { showLayer(radio.value); });
+    document.querySelectorAll('input[name="layer"]').forEach(function (radio) {
+        radio.addEventListener('change', function () { showLayer(radio.value); });
     });
 
-    // Opacity slider
+    // ── Opacity slider ────────────────────────────────────────────────────────
     var opacitySlider = document.getElementById('opacity-slider');
     var opacityLabel  = document.getElementById('opacity-value');
-    opacitySlider.addEventListener('input', function() {
+    opacitySlider.addEventListener('input', function () {
         currentOpacity = opacitySlider.value / 100;
         opacityLabel.textContent = opacitySlider.value + '%';
-        var layerNames = ['temp', 'wind', 'apparent', 'vis', 'cloud', 'rh'];
-        layerNames.forEach(function(name) {
-            if (map.getLayer(name + '-overlay')) {
-                map.setPaintProperty(name + '-overlay', 'raster-opacity', currentOpacity);
+        ALL_LAYERS.forEach(function (name) {
+            if (map.getLayer(name + '-layer')) {
+                map.setPaintProperty(name + '-layer', 'raster-opacity', currentOpacity);
             }
         });
     });
 
-    // ===== INTERACTIVE VALUE LOOKUP =====
-    var dataCache = {};
-    var dataMeta = null;
-    var valuePopup = null;
+    // ── Bounds update ─────────────────────────────────────────────────────────
+    var pendingBounds = null; // set when map style not yet loaded
 
-    function loadLayerData(layerName) {
-        if (layerName === 'none' || !dataMeta || !dataMeta.data_rows) return;
-        if (dataCache[layerName]) return;
-        fetch('./data/' + layerName + '_data.bin')
-            .then(function(r) {
-                if (!r.ok) throw new Error('No data file for ' + layerName);
-                return r.arrayBuffer();
-            })
-            .then(function(buf) {
-                dataCache[layerName] = new Float32Array(buf);
-            })
-            .catch(function() {});
+    function applyBounds(b) {
+        boundsArr = b;
+        var coords = toMapboxCoords(b);
+        ALL_LAYERS.forEach(function (name) {
+            if (map.getSource(name + '-src')) {
+                map.getSource(name + '-src').setCoordinates(coords);
+            }
+        });
     }
 
-    function lookupValue(layerName, latlng) {
-        var arr = dataCache[layerName];
-        if (!arr || !dataMeta || !dataMeta.data_rows) return null;
+    // ── Interactive value lookup ───────────────────────────────────────────────
+    // process_rtma.py saves downsampled float32 binary files (*_data.bin).
+    // Row 0 = southernmost lat (matches imshow origin='lower'), little-endian.
+    var dataCache = {};
+    var dataMeta  = null;
+    var valuePopup = null;
 
-        var rows = dataMeta.data_rows;
-        var cols = dataMeta.data_cols;
-        var b = imageBounds;
-        var minLat = b[0][0], maxLat = b[1][0];
-        var minLon = b[0][1], maxLon = b[1][1];
+    function loadLayerData(name) {
+        if (name === 'none' || !dataMeta) return;
+        if (dataCache[name]) return;
+        fetch('./data/' + name + '_data.bin')
+            .then(function (r) { if (!r.ok) throw new Error('missing'); return r.arrayBuffer(); })
+            .then(function (buf) { dataCache[name] = new Float32Array(buf); })
+            .catch(function () { /* layer may not exist in this GRIB file */ });
+    }
 
-        var rowFrac = (latlng.lat - minLat) / (maxLat - minLat);
-        var colFrac = (latlng.lng - minLon) / (maxLon - minLon);
-
+    function lookupValue(name, lng, lat) {
+        var arr = dataCache[name];
+        if (!arr || !dataMeta) return null;
+        var rows   = dataMeta.rows, cols = dataMeta.cols;
+        var minLat = boundsArr[0], minLon = boundsArr[1];
+        var maxLat = boundsArr[2], maxLon = boundsArr[3];
+        var rowFrac = (lat - minLat) / (maxLat - minLat);
+        var colFrac = (lng - minLon) / (maxLon - minLon);
         if (rowFrac < 0 || rowFrac > 1 || colFrac < 0 || colFrac > 1) return null;
-
         var row = Math.min(rows - 1, Math.max(0, Math.round(rowFrac * (rows - 1))));
         var col = Math.min(cols - 1, Math.max(0, Math.round(colFrac * (cols - 1))));
         var val = arr[row * cols + col];
-
-        if (!isFinite(val) || isNaN(val)) return null;
-        return val;
+        return (isFinite(val) && !isNaN(val)) ? val : null;
     }
 
-    function formatValue(layerName, val) {
-        var cfg = legendConfigs[layerName];
+    function formatValue(name, val) {
+        var cfg = legendConfigs[name];
         if (!cfg) return val.toFixed(1);
-        if (layerName === 'temp' || layerName === 'apparent') return val.toFixed(1) + cfg.unit;
-        if (layerName === 'wind') return val.toFixed(1) + cfg.unit;
-        if (layerName === 'vis')  return val.toFixed(2) + cfg.unit;
-        if (layerName === 'cloud' || layerName === 'rh') return Math.round(val) + cfg.unit;
-        return val.toFixed(1) + (cfg.unit || '');
+        if (name === 'cloud' || name === 'rh') return Math.round(val) + cfg.unit;
+        if (name === 'vis') return val.toFixed(2) + cfg.unit;
+        return val.toFixed(1) + cfg.unit;
     }
 
-    // Double-click: show exact value at cursor
-    map.on('dblclick', function(e) {
-        var layerName = getSelectedLayer();
-        var cfg = legendConfigs[layerName];
+    // Double-click / double-tap → show value popup.
+    // Mapbox GL event provides e.lngLat (not Leaflet's e.latlng).
+    map.on('dblclick', function (e) {
+        var name = getSelectedLayer();
+        if (name === 'none') return;
 
-        if (valuePopup) {
-            valuePopup.remove();
-            valuePopup = null;
-        }
+        if (valuePopup) { valuePopup.remove(); valuePopup = null; }
 
-        var val = lookupValue(layerName, e.latlng);
-        var contentHtml;
+        var lng = e.lngLat.lng, lat = e.lngLat.lat;
+        var val = lookupValue(name, lng, lat);
+        var cfg = legendConfigs[name];
+        var html;
 
-        if (layerName === 'none') {
-            return;
-        } else if (val !== null) {
-            contentHtml =
-                '<div class="popup-layer-name">' + (cfg ? cfg.title : layerName) + '</div>' +
-                '<div class="popup-value">' + formatValue(layerName, val) + '</div>' +
-                '<div class="popup-coords">' +
-                    e.latlng.lat.toFixed(3) + '°, ' + e.latlng.lng.toFixed(3) + '°' +
-                '</div>';
+        if (val !== null) {
+            html = '<div class="popup-layer-name">' + cfg.title + '</div>' +
+                   '<div class="popup-value">' + formatValue(name, val) + '</div>' +
+                   '<div class="popup-coords">' + lat.toFixed(3) + '°, ' + lng.toFixed(3) + '°</div>';
         } else {
-            contentHtml =
-                '<div class="popup-layer-name">' + (cfg ? cfg.title : layerName) + '</div>' +
-                '<div class="popup-unavailable">Data not available</div>' +
-                '<div class="popup-coords">' +
-                    e.latlng.lat.toFixed(3) + '°, ' + e.latlng.lng.toFixed(3) + '°' +
-                '</div>';
+            html = '<div class="popup-layer-name">' + cfg.title + '</div>' +
+                   '<div class="popup-unavailable">Data not available</div>' +
+                   '<div class="popup-coords">' + lat.toFixed(3) + '°, ' + lng.toFixed(3) + '°</div>';
         }
 
         valuePopup = new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
-            .setLngLat([e.latlng.lng, e.latlng.lat])
-            .setHTML(contentHtml)
+            .setLngLat([lng, lat])
+            .setHTML(html)
             .addTo(map);
     });
 
-    // Show the default layer immediately
+    // Show legend for default layer right away (map layers added on 'load')
     updateLegend(getSelectedLayer());
 
-    // Load metadata — update bounds and timestamp
+    // ── Metadata fetch ────────────────────────────────────────────────────────
     fetch('./data/metadata.json')
-        .then(function(response) {
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            return response.json();
-        })
-        .then(function(meta) {
-            var ts = new Date(meta.timestamp).toLocaleString();
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (meta) {
             statusDiv.classList.remove('loading');
             statusDiv.classList.add('ok');
-            statusText.innerHTML =
-                '<span style="color:#22c55e;font-weight:600">Live</span> &mdash; ' + ts;
+            statusText.innerHTML = '<span style="color:#22c55e;font-weight:600">Live</span> &mdash; ' +
+                new Date(meta.timestamp).toLocaleString();
 
+            // meta.bounds = [[minLat, minLon], [maxLat, maxLon]]
             var b = meta.bounds;
-            imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
+            var newBounds = [b[0][0], b[0][1], b[1][0], b[1][1]];
 
-            // Update image bounds in Mapbox
-            if (map.getSource('temp-image')) {
-                var layerNames = ['temp', 'wind', 'apparent', 'vis', 'cloud', 'rh'];
-                layerNames.forEach(function(name) {
-                    if (map.getSource(name + '-image')) {
-                        map.getSource(name + '-image').setCoordinates(imageBounds);
-                    }
-                });
+            if (map.isStyleLoaded()) {
+                applyBounds(newBounds);
+            } else {
+                pendingBounds = newBounds;
             }
 
             if (meta.data_rows && meta.data_cols) {
-                dataMeta = { data_rows: meta.data_rows, data_cols: meta.data_cols };
+                dataMeta = { rows: meta.data_rows, cols: meta.data_cols };
                 loadLayerData(getSelectedLayer());
             }
 
-            showLayer(getSelectedLayer());
+            if (map.isStyleLoaded()) {
+                showLayer(getSelectedLayer());
+            } else {
+                pendingLayer = getSelectedLayer();
+            }
         })
-        .catch(function(err) {
+        .catch(function (err) {
             console.error(err);
             statusDiv.classList.remove('loading');
             statusDiv.classList.add('error');
-            statusText.innerHTML =
-                'No data yet &mdash; pipeline has not run.<br>' +
+            statusText.innerHTML = 'No data yet &mdash; pipeline has not run.<br>' +
                 '<span style="font-size:11px;color:#64748b">Check GitHub Actions workflow.</span>';
         });
 </script>

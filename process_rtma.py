@@ -85,7 +85,7 @@ def main():
             if keys:
                 target_key = sorted(keys)[-1]
                 parts = target_key.split('.')
-                hour_str = parts[1][1:3]  # tHHHz
+                hour_str = parts[2][1:3]  # tHHHz — parts[2] is 't00z', e.g. 't06z'[1:3]='06'
                 data_timestamp = datetime(int(day[0:4]), int(day[4:6]), int(day[6:8]), 
                                           int(hour_str), 0, 0, tzinfo=timezone.utc).isoformat()
                 break

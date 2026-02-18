@@ -4,45 +4,210 @@
     <title>RTMA Weather Viewer</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; background: #222; color: white; font-family: sans-serif; }
+        /* ===== RESET & BASE ===== */
+        *, *::before, *::after { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0;
+            background: #030c1a;
+            color: #e0f0ff;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
         #map { width: 100vw; height: 100vh; }
-        #status { 
-            position: absolute; top: 10px; left: 10px; z-index: 1000; 
-            background: rgba(0,0,0,0.7); padding: 12px; border-radius: 6px; 
-            pointer-events: none; 
+
+        /* ===== LIQUID GLASS BASE ===== */
+        .glass {
+            background: rgba(6, 18, 52, 0.52);
+            backdrop-filter: blur(22px) saturate(180%);
+            -webkit-backdrop-filter: blur(22px) saturate(180%);
+            border: 1px solid rgba(100, 160, 255, 0.18);
+            box-shadow:
+                0 8px 32px rgba(0, 8, 50, 0.55),
+                inset 0 1px 0 rgba(255, 255, 255, 0.07),
+                inset 0 -1px 0 rgba(0, 15, 70, 0.4);
+            border-radius: 14px;
         }
-        #controls { 
-            position: absolute; top: 10px; right: 10px; z-index: 1000; 
-            background: rgba(0,0,0,0.7); padding: 12px; border-radius: 6px; 
+
+        /* ===== TITLE BADGE (top-center) ===== */
+        #title-badge {
+            position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; padding: 9px 22px; pointer-events: none; white-space: nowrap;
         }
-        label { display: block; margin: 6px 0; cursor: pointer; }
-        .legend { 
-            position: absolute; bottom: 30px; left: 10px; z-index: 1000; 
-            background: rgba(0,0,0,0.7); padding: 10px; border-radius: 6px; 
-            color: white; min-width: 220px; display: none; 
+        #title-badge .badge-text {
+            font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+            text-transform: uppercase;
+            background: linear-gradient(135deg, #93c5fd 0%, #60a5fa 50%, #818cf8 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
-        .legend .gradient {
-            height: 12px; margin: 8px 0; border-radius: 4px;
+
+        /* ===== STATUS PANEL (top-left) ===== */
+        #status {
+            position: absolute; top: 16px; left: 16px; z-index: 1000;
+            padding: 12px 16px; pointer-events: none; min-width: 230px;
+            transition: border-color 0.4s;
         }
-        .legend .labels { display: flex; justify-content: space-between; font-size: 12px; }
+        #status .status-header {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+            text-transform: uppercase; color: #60a5fa; margin-bottom: 5px;
+        }
+        .status-dot {
+            width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+            background: #f59e0b; box-shadow: 0 0 6px #f59e0b;
+        }
+        #status.ok    .status-dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; animation: none; }
+        #status.error .status-dot { background: #ef4444; box-shadow: 0 0 6px #ef4444; animation: none; }
+        #status.loading .status-dot { animation: pulse 1.4s ease-in-out infinite; }
+        #status.error { border-color: rgba(239, 68, 68, 0.3); }
+        #status.ok    { border-color: rgba(34, 197, 94, 0.22); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+        .status-text { font-size: 12px; color: #94a3b8; line-height: 1.6; }
+
+        /* ===== CONTROLS PANEL (top-right) ===== */
+        #controls {
+            position: absolute; top: 16px; right: 16px; z-index: 1000;
+            padding: 16px 18px; min-width: 186px;
+        }
+        .panel-title {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+            text-transform: uppercase; color: #60a5fa;
+            margin-bottom: 13px; padding-bottom: 9px;
+            border-bottom: 1px solid rgba(100, 160, 255, 0.14);
+        }
+
+        /* Custom radio buttons */
+        .layer-option {
+            display: flex; align-items: center; margin: 9px 0;
+            cursor: pointer; user-select: none;
+        }
+        .layer-option input[type="radio"] { display: none; }
+        .radio-dot {
+            width: 15px; height: 15px; border-radius: 50%;
+            border: 2px solid rgba(100, 160, 255, 0.35);
+            margin-right: 10px; flex-shrink: 0;
+            transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+            background: transparent; position: relative;
+        }
+        .layer-option input[type="radio"]:checked ~ .radio-dot {
+            border-color: #3b82f6; background: #3b82f6;
+            box-shadow: 0 0 9px rgba(59, 130, 246, 0.65);
+        }
+        .layer-option input[type="radio"]:checked ~ .radio-dot::after {
+            content: ''; position: absolute;
+            width: 5px; height: 5px; border-radius: 50%; background: #fff;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+        }
+        .layer-label { font-size: 13px; color: #94a3b8; transition: color 0.2s; }
+        .layer-option:has(input:checked) .layer-label { color: #e0f2fe; font-weight: 500; }
+
+        /* Opacity Slider */
+        .slider-section {
+            margin-top: 14px; padding-top: 12px;
+            border-top: 1px solid rgba(100, 160, 255, 0.10);
+        }
+        .slider-header {
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+            text-transform: uppercase; color: #60a5fa; margin-bottom: 8px;
+        }
+        #opacity-value { color: #93c5fd; }
+        #opacity-slider {
+            -webkit-appearance: none; width: 100%; height: 3px;
+            border-radius: 2px; background: rgba(59, 130, 246, 0.22); outline: none;
+            cursor: pointer;
+        }
+        #opacity-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 13px; height: 13px;
+            border-radius: 50%; background: #3b82f6; cursor: pointer;
+            box-shadow: 0 0 7px rgba(59, 130, 246, 0.7);
+        }
+        #opacity-slider::-moz-range-thumb {
+            width: 13px; height: 13px; border-radius: 50%; background: #3b82f6;
+            border: none; box-shadow: 0 0 7px rgba(59, 130, 246, 0.7);
+        }
+
+        /* ===== LEGEND (bottom-left) ===== */
+        .legend {
+            position: absolute; bottom: 24px; left: 16px; z-index: 1000;
+            padding: 13px 16px; min-width: 220px; display: none;
+        }
+        .legend-title {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+            text-transform: uppercase; color: #60a5fa; margin-bottom: 9px;
+        }
+        .legend-gradient { height: 7px; border-radius: 4px; margin-bottom: 5px; }
+        .legend-labels {
+            display: flex; justify-content: space-between;
+            font-size: 11px; color: #64748b;
+        }
+
+        /* ===== LEAFLET OVERRIDES ===== */
+        .leaflet-control-zoom { display: none; }
+        .leaflet-control-attribution {
+            background: rgba(3, 12, 26, 0.65) !important;
+            color: rgba(100, 116, 139, 0.75) !important;
+            font-size: 9px !important;
+            backdrop-filter: blur(6px);
+            border-radius: 6px 0 0 0;
+        }
+        .leaflet-control-attribution a { color: rgba(96, 165, 250, 0.65) !important; }
     </style>
 </head>
 <body>
-<div id="status">Loading data...</div>
 <div id="map"></div>
 
-<div id="controls">
-    <strong>Overlay:</strong><br>
-    <label><input type="radio" name="layer" value="temp" checked> Temperature</label>
-    <label><input type="radio" name="layer" value="wind"> Wind Speed</label>
-    <label><input type="radio" name="layer" value="apparent"> Apparent Temperature</label>
-    <label><input type="radio" name="layer" value="none"> None</label>
+<!-- Title badge -->
+<div id="title-badge" class="glass">
+    <span class="badge-text">RTMA Live Weather</span>
 </div>
 
-<div class="legend" id="legend">
-    <div id="legend-title"><strong>Temperature (°F)</strong></div>
-    <div class="gradient" id="legend-gradient"></div>
-    <div class="labels">
+<!-- Status panel -->
+<div id="status" class="glass loading">
+    <div class="status-header">
+        <span class="status-dot"></span>
+        Data Status
+    </div>
+    <div class="status-text" id="status-text">Fetching latest data...</div>
+</div>
+
+<!-- Controls panel -->
+<div id="controls" class="glass">
+    <div class="panel-title">Weather Layer</div>
+    <label class="layer-option">
+        <input type="radio" name="layer" value="temp" checked>
+        <span class="radio-dot"></span>
+        <span class="layer-label">Temperature</span>
+    </label>
+    <label class="layer-option">
+        <input type="radio" name="layer" value="wind">
+        <span class="radio-dot"></span>
+        <span class="layer-label">Wind Speed</span>
+    </label>
+    <label class="layer-option">
+        <input type="radio" name="layer" value="apparent">
+        <span class="radio-dot"></span>
+        <span class="layer-label">Apparent Temp</span>
+    </label>
+    <label class="layer-option">
+        <input type="radio" name="layer" value="none">
+        <span class="radio-dot"></span>
+        <span class="layer-label">None</span>
+    </label>
+
+    <div class="slider-section">
+        <div class="slider-header">
+            <span>Opacity</span>
+            <span id="opacity-value">65%</span>
+        </div>
+        <input type="range" id="opacity-slider" min="10" max="100" value="65" step="5">
+    </div>
+</div>
+
+<!-- Legend -->
+<div class="legend glass" id="legend">
+    <div class="legend-title" id="legend-title">Temperature (°F)</div>
+    <div class="legend-gradient" id="legend-gradient"></div>
+    <div class="legend-labels">
         <span id="min-label">-20</span>
         <span id="max-label">110</span>
     </div>
@@ -50,115 +215,124 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // Create map with zoom animation DISABLED to fix image disappear glitch
+    var currentOpacity = 0.65;
+
+    // Create map — zoom animation disabled to prevent image disappear glitch on zoom
     var map = L.map('map', {
         center: [39.8283, -98.5795],
         zoom: 4,
-        zoomAnimation: false,           // Prevents image from hiding/disappearing during zoom
-        markerZoomAnimation: false
+        zoomAnimation: false,
+        markerZoomAnimation: false,
+        zoomControl: false
     });
 
-    // Custom pane for RTMA images — below Mapbox tile labels (towns, borders, roads)
+    // BUG FIX: pane zIndex must be ABOVE tilePane (200), not below it.
+    // Previously set to 150, which caused the tile layer to completely cover
+    // the weather images — making them invisible on the map.
     map.createPane('rtmaPane');
-    map.getPane('rtmaPane').style.zIndex = 150;  // tilePane is 200 → labels stay on top
+    map.getPane('rtmaPane').style.zIndex = 300;
 
-    var statusDiv = document.getElementById('status');
-    var legendDiv = document.getElementById('legend');
+    var statusDiv  = document.getElementById('status');
+    var statusText = document.getElementById('status-text');
+    var legendDiv  = document.getElementById('legend');
 
-    // Mapbox Dark v11 basemap – REPLACE THE TOKEN!
+    // Mapbox Dark v11 basemap
     L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token={accessToken}', {
-        attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+        attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors | &copy; <a href="https://www.mapbox.com/">Mapbox</a>',
         maxZoom: 18,
         tileSize: 512,
         zoomOffset: -1,
-        accessToken: 'pk.eyJ1IjoiZ3RnMDExNiIsImEiOiJjbWxsODV6NXAwNThmM2ZwdWlkYm0xNjFlIn0.vI186twXYzY45nnuV5FucQ'   // ← Get free token at mapbox.com
+        accessToken: 'pk.eyJ1IjoiZ3RnMDExNiIsImEiOiJjbWxsODV6NXAwNThmM2ZwdWlkYm0xNjFlIn0.vI186twXYzY45nnuV5FucQ'
     }).addTo(map);
 
-    // Image layers (added to low pane)
-    const layers = {
-        temp: L.imageOverlay("./data/temp.png", [[0,0],[0,0]], { 
-            opacity: 0.65, pane: 'rtmaPane', interactive: false 
-        }),
-        wind: L.imageOverlay("./data/wind.png", [[0,0],[0,0]], { 
-            opacity: 0.65, pane: 'rtmaPane', interactive: false 
-        }),
-        apparent: L.imageOverlay("./data/apparent.png", [[0,0],[0,0]], { 
-            opacity: 0.65, pane: 'rtmaPane', interactive: false 
-        })
+    // BUG FIX: use approximate CONUS bounds as defaults instead of [[0,0],[0,0]].
+    // [[0,0],[0,0]] creates a zero-area bounding box; the image is invisible
+    // until metadata loads. Defaulting to CONUS bounds means images render
+    // immediately (slightly approximate) while metadata fetch is in-flight.
+    var defaultBounds = [[24.0, -126.0], [50.0, -66.0]];
+
+    var layers = {
+        temp:     L.imageOverlay('./data/temp.png',     defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
+        wind:     L.imageOverlay('./data/wind.png',     defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false }),
+        apparent: L.imageOverlay('./data/apparent.png', defaultBounds, { opacity: currentOpacity, pane: 'rtmaPane', interactive: false })
     };
 
-    // Legend configuration per layer
-    const legendConfigs = {
-        temp: { 
-            title: "Temperature (°F)", 
-            min: -20, max: 110,
-            gradient: 'linear-gradient(to right, #30123b, #3c59ff, #00ffff, #7cff00, #ffff00, #ff7f00, #ff0000)'
-        },
-        wind: { 
-            title: "Wind Speed (mph)", 
-            min: 0, max: 60,
-            gradient: 'linear-gradient(to right, #440154, #3b528b, #21908c, #5dc863, #fde725)'
-        },
-        apparent: { 
-            title: "Apparent Temperature (°F)", 
-            min: -40, max: 140,
-            gradient: 'linear-gradient(to right, #30123b, #3c59ff, #00ffff, #7cff00, #ffff00, #ff7f00, #ff0000)'
-        }
+    var legendConfigs = {
+        temp:     { title: 'Temperature (°F)',        min: -20, max: 110, gradient: 'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)' },
+        wind:     { title: 'Wind Speed (mph)',         min: 0,   max: 60,  gradient: 'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)' },
+        apparent: { title: 'Apparent Temperature (°F)', min: -40, max: 140, gradient: 'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)' }
     };
 
     function updateLegend(layerName) {
-        if (layerName === 'none') {
-            legendDiv.style.display = 'none';
-            return;
-        }
-        const cfg = legendConfigs[layerName];
-        document.getElementById('legend-title').innerHTML = `<strong>${cfg.title}</strong>`;
-        document.getElementById('min-label').textContent = cfg.min;
-        document.getElementById('max-label').textContent = cfg.max;
+        if (layerName === 'none') { legendDiv.style.display = 'none'; return; }
+        var cfg = legendConfigs[layerName];
+        document.getElementById('legend-title').textContent    = cfg.title;
+        document.getElementById('min-label').textContent       = cfg.min;
+        document.getElementById('max-label').textContent       = cfg.max;
         document.getElementById('legend-gradient').style.background = cfg.gradient;
         legendDiv.style.display = 'block';
     }
 
-    // Layer radio buttons
-    document.querySelectorAll('input[name="layer"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            Object.values(layers).forEach(l => {
-                if (map.hasLayer(l)) map.removeLayer(l);
-            });
-            const val = radio.value;
-            if (val !== 'none' && layers[val]) {
-                layers[val].addTo(map);
-            }
-            updateLegend(val);
+    function getSelectedLayer() {
+        var checked = document.querySelector('input[name="layer"]:checked');
+        return checked ? checked.value : 'temp';
+    }
+
+    function showLayer(val) {
+        Object.values(layers).forEach(function(l) {
+            if (map.hasLayer(l)) map.removeLayer(l);
         });
+        if (val !== 'none' && layers[val]) layers[val].addTo(map);
+        updateLegend(val);
+    }
+
+    // Layer radio buttons
+    document.querySelectorAll('input[name="layer"]').forEach(function(radio) {
+        radio.addEventListener('change', function() { showLayer(radio.value); });
     });
 
-    // Load metadata and apply bounds
+    // Opacity slider
+    var opacitySlider = document.getElementById('opacity-slider');
+    var opacityLabel  = document.getElementById('opacity-value');
+    opacitySlider.addEventListener('input', function() {
+        currentOpacity = opacitySlider.value / 100;
+        opacityLabel.textContent = opacitySlider.value + '%';
+        Object.values(layers).forEach(function(l) { l.setOpacity(currentOpacity); });
+    });
+
+    // Show the default layer immediately so images attempt to load right away
+    showLayer(getSelectedLayer());
+
+    // Load metadata — update precise bounds and timestamp display
     fetch('./data/metadata.json')
-        .then(response => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        .then(function(response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
             return response.json();
         })
-        .then(meta => {
-            const ts = new Date(meta.timestamp).toLocaleString();
-            statusDiv.innerHTML = `Data Timestamp: ${ts}<br>Bounds loaded.`;
+        .then(function(meta) {
+            var ts = new Date(meta.timestamp).toLocaleString();
+            statusDiv.classList.remove('loading');
+            statusDiv.classList.add('ok');
+            statusText.innerHTML =
+                '<span style="color:#22c55e;font-weight:600">Live</span> &mdash; ' + ts;
 
-            const b = meta.bounds;
-            const imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
-
-            Object.values(layers).forEach(layer => {
+            var b = meta.bounds;
+            var imageBounds = [[b[0][0], b[0][1]], [b[1][0], b[1][1]]];
+            Object.values(layers).forEach(function(layer) {
                 layer.setBounds(imageBounds);
-                layer.redraw();  // Force redraw to help with initial visibility
             });
 
-            // Show temperature by default
-            layers.temp.addTo(map);
-            updateLegend('temp');
+            // BUG FIX: re-show whichever layer the user currently has selected,
+            // rather than unconditionally adding layers.temp regardless of selection.
+            showLayer(getSelectedLayer());
         })
-        .catch(err => {
+        .catch(function(err) {
             console.error(err);
-            statusDiv.innerHTML = `Error: ${err.message}<br>Check console / data folder / server paths.`;
-            statusDiv.style.background = "rgba(200,0,0,0.8)";
+            statusDiv.classList.remove('loading');
+            statusDiv.classList.add('error');
+            statusText.innerHTML =
+                'No data yet &mdash; pipeline has not run.<br>' +
+                '<span style="font-size:11px;color:#64748b">Check GitHub Actions workflow.</span>';
         });
 </script>
 </body>

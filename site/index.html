@@ -16,7 +16,7 @@
         }
         #status { margin-bottom: 10px; font-size: 13px; }
         .loading::before { content:"⏳ "; }
-        .ok::before    { content:"✅ "; }
+        .ok::before { content:"✅ "; }
         .error::before { content:"⚠️ "; }
         label { display: block; margin: 6px 0; cursor: pointer; }
         #opacity-container { margin-top:12px; }
@@ -31,43 +31,72 @@
         .gradient { height:12px; border-radius:6px; margin:8px 0; }
         .labels { display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; }
 
-        /* Popup styling */
+        /* ── Improved Popup ──────────────────────────────────────── */
         .mapboxgl-popup { z-index: 1001; }
         .mapboxgl-popup-content {
-            background: rgba(6,18,52,0.88); backdrop-filter: blur(16px);
+            background: rgba(6, 18, 52, 0.92);
+            backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(100,160,255,0.25); border-radius: 10px;
-            box-shadow: 0 6px 24px rgba(0,0,50,0.6); color:#e0f0ff; padding:0;
+            border: 1px solid rgba(100, 160, 255, 0.35);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,50,0.7);
+            color: #e0f0ff;
+            padding: 14px 18px;
+            min-width: 220px;
+            max-width: 320px;
+            font-size: 14px;
+            line-height: 1.45;
         }
-        .mapboxgl-popup-tip { border-top-color: rgba(6,18,52,0.88) !important; }
+        .mapboxgl-popup-tip { border-top-color: rgba(6,18,52,0.92) !important; }
         .popup-layer-name {
-            font-size:9px; font-weight:700; letter-spacing:0.12em;
-            text-transform:uppercase; color:#60a5fa; margin-bottom:3px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: #60a5fa;
+            margin-bottom: 6px;
         }
-        .popup-value { font-size:18px; font-weight:600; margin:4px 0; }
-        .popup-coords { font-size:10px; color:#475569; margin-top:3px; }
-        .popup-unavailable { font-size:13px; color:#64748b; font-style:italic; }
+        .popup-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #e0f0ff;
+            margin: 6px 0 4px;
+        }
+        .popup-unit {
+            font-size: 16px;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+        .popup-coords {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 8px;
+            opacity: 0.9;
+        }
+        .popup-unavailable {
+            font-size: 14px;
+            color: #f87171;
+            font-style: italic;
+            margin: 8px 0;
+        }
         .mapboxgl-popup-close-button { color:#60a5fa !important; font-size:16px; }
 
-        /* Hide Mapbox logo & controls you don't want */
+        /* Hide unwanted Mapbox elements */
         .mapboxgl-ctrl-logo, .mapboxgl-ctrl-bottom-right { display:none !important; }
     </style>
 </head>
 <body>
     <div id="map"></div>
 
-    <!-- UI controls (adjust layout/classes as needed) -->
     <div id="ui">
         <div id="status" class="loading">Loading...</div>
         <div id="status-text"></div>
-
         <label><input type="radio" name="layer" value="temp" checked> Temperature</label>
         <label><input type="radio" name="layer" value="apparent"> Apparent Temp</label>
         <label><input type="radio" name="layer" value="wind"> Wind Speed</label>
         <label><input type="radio" name="layer" value="rh"> Relative Humidity</label>
         <label><input type="radio" name="layer" value="vis"> Visibility</label>
         <label><input type="radio" name="layer" value="cloud"> Cloud Cover</label>
-
         <div id="opacity-container">
             <label>Opacity: <span id="opacity-value">65%</span></label>
             <input type="range" id="opacity-slider" min="0" max="100" value="65" step="1"/>
@@ -90,12 +119,12 @@
         const ALL_LAYERS = ['temp', 'wind', 'apparent', 'vis', 'cloud', 'rh'];
 
         const legendConfigs = {
-            temp:     { title:'Temperature (°F)',       min:-20, max:110,  gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
-            wind:     { title:'Wind Speed (mph)',       min:0,   max:60,   gradient:'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)', unit:' mph' },
+            temp:     { title:'Temperature (°F)',       min:-20, max:110, gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
+            wind:     { title:'Wind Speed (mph)',       min:0,   max:60,  gradient:'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)', unit:' mph' },
             apparent: { title:'Apparent Temperature (°F)', min:-30, max:120, gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
-            vis:      { title:'Visibility (mi)',        min:0,   max:10,   gradient:'linear-gradient(to right,#fef3c7,#fbbf24,#d97706,#b45309)', unit:' mi' },
-            cloud:    { title:'Cloud Cover (%)',        min:0,   max:100,  gradient:'linear-gradient(to right,#f0f9ff,#e0f2fe,#bae6fd,#7dd3fc,#38bdf8,#0ea5e9)', unit:'%' },
-            rh:       { title:'Relative Humidity (%)',  min:0,   max:100,  gradient:'linear-gradient(to right,#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58)', unit:'%' }
+            vis:      { title:'Visibility (mi)',        min:0,   max:10,  gradient:'linear-gradient(to right,#fef3c7,#fbbf24,#d97706,#b45309)', unit:' mi' },
+            cloud:    { title:'Cloud Cover (%)',        min:0,   max:100, gradient:'linear-gradient(to right,#f0f9ff,#e0f2fe,#bae6fd,#7dd3fc,#38bdf8,#0ea5e9)', unit:'%' },
+            rh:       { title:'Relative Humidity (%)',  min:0,   max:100, gradient:'linear-gradient(to right,#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58)', unit:'%' }
         };
 
         const map = new mapboxgl.Map({
@@ -105,19 +134,16 @@
             zoom: 4
         });
 
-        let activeLayer = 'temp';           // tracks what the user currently wants to see
+        let activeLayer = 'temp';
         let pendingBounds = null;
         let dataCache = {};
         let dataMeta = null;
         let valuePopup = null;
-        let boundsArr = [24.0, -126.0, 50.0, -66.0]; // [minLat, minLon, maxLat, maxLon]
+        let boundsArr = [24.0, -126.0, 50.0, -66.0]; // fallback
 
         function toMapboxCoords(b) {
             const [minLat, minLon, maxLat, maxLon] = b;
-            return [
-                [minLon, maxLat], [maxLon, maxLat],
-                [maxLon, minLat], [minLon, minLat]
-            ];
+            return [[minLon, maxLat], [maxLon, maxLat], [maxLon, minLat], [minLon, minLat]];
         }
 
         function getSelectedLayer() {
@@ -150,20 +176,17 @@
 
         function showLayer(val) {
             activeLayer = val;
-
             if (!map.isStyleLoaded()) {
                 updateLegend(val);
                 loadLayerData(val);
                 return;
             }
-
             ALL_LAYERS.forEach(name => {
                 const layerId = name + '-layer';
                 if (map.getLayer(layerId)) {
                     map.setLayoutProperty(layerId, 'visibility', name === val ? 'visible' : 'none');
                 }
             });
-
             updateLegend(val);
             loadLayerData(val);
         }
@@ -174,7 +197,7 @@
             fetch(`./data/${name}_data.bin`)
                 .then(r => { if (!r.ok) throw new Error(); return r.arrayBuffer(); })
                 .then(buf => { dataCache[name] = new Float32Array(buf); })
-                .catch(() => {}); // silent fail if missing
+                .catch(() => {}); // silent fail
         }
 
         function lookupValue(name, lng, lat) {
@@ -194,12 +217,11 @@
         function formatValue(name, val) {
             const cfg = legendConfigs[name];
             if (!cfg) return val.toFixed(1);
-            if (name === 'cloud' || name === 'rh') return Math.round(val) + cfg.unit;
-            if (name === 'vis') return val.toFixed(2) + cfg.unit;
-            return val.toFixed(1) + cfg.unit;
+            if (name === 'cloud' || name === 'rh') return Math.round(val);
+            if (name === 'vis') return val.toFixed(2);
+            return val.toFixed(1);
         }
 
-        // ── Map load ─────────────────────────────────────────────────────────────
         function getFirstLabelLayerId() {
             const layers = map.getStyle().layers;
             for (const layer of layers) {
@@ -207,7 +229,7 @@
                     return layer.id;
                 }
             }
-            return undefined; // fall back: insert on top
+            return undefined;
         }
 
         map.on('load', () => {
@@ -220,26 +242,73 @@
                     url: `./data/${name}.png`,
                     coordinates: coords
                 });
-
                 map.addLayer({
                     id: name + '-layer',
                     type: 'raster',
                     source: name + '-src',
                     paint: { 'raster-opacity': 0.65 },
-                    layout: { visibility: 'none' }   // all hidden at first
+                    layout: { visibility: 'none' }
                 }, beforeId);
             });
+
+            // ── Add visible state & county boundaries ───────────────────────
+            map.addLayer({
+                id: 'states-outline',
+                type: 'line',
+                source: { type: 'vector', url: 'mapbox://mapbox.mapbox-streets-v8' },
+                'source-layer': 'admin',
+                filter: ['==', 'admin_level', 2],
+                paint: {
+                    'line-color': '#60a5fa',
+                    'line-width': 1.2,
+                    'line-opacity': 0.45
+                }
+            }, beforeId);
+
+            map.addLayer({
+                id: 'states-labels',
+                type: 'symbol',
+                source: { type: 'vector', url: 'mapbox://mapbox.mapbox-streets-v8' },
+                'source-layer': 'admin',
+                filter: ['==', 'admin_level', 2],
+                layout: {
+                    'text-field': ['get', 'name_en'],
+                    'text-size': 11,
+                    'text-font': ['Open Sans Semibold'],
+                    'text-max-width': 8,
+                    'text-padding': 4
+                },
+                paint: {
+                    'text-color': '#a5b4fc',
+                    'text-halo-color': '#0f172a',
+                    'text-halo-width': 1.5,
+                    'text-halo-blur': 1
+                }
+            }, beforeId);
+
+            map.addLayer({
+                id: 'counties-outline',
+                type: 'line',
+                source: { type: 'vector', url: 'mapbox://mapbox.mapbox-streets-v8' },
+                'source-layer': 'admin',
+                filter: ['==', 'admin_level', 4],
+                minzoom: 7,
+                paint: {
+                    'line-color': '#94a3b8',
+                    'line-width': 0.8,
+                    'line-opacity': 0.25
+                }
+            }, beforeId);
 
             if (pendingBounds) {
                 applyBounds(pendingBounds);
                 pendingBounds = null;
             }
 
-            // Now safe to show the active layer
             showLayer(activeLayer);
         });
 
-        // ── Opacity slider ───────────────────────────────────────────────────────
+        // Opacity slider
         const opacitySlider = document.getElementById('opacity-slider');
         const opacityLabel = document.getElementById('opacity-value');
         opacitySlider.addEventListener('input', () => {
@@ -253,18 +322,15 @@
             });
         });
 
-        // ── Layer radio buttons ──────────────────────────────────────────────────
+        // Layer radio buttons
         document.querySelectorAll('input[name="layer"]').forEach(radio => {
-            radio.addEventListener('change', () => {
-                showLayer(radio.value);
-            });
+            radio.addEventListener('change', () => showLayer(radio.value));
         });
 
-        // ── Double-click popup ───────────────────────────────────────────────────
+        // Double-click popup
         map.on('dblclick', e => {
             const name = getSelectedLayer();
             if (name === 'none') return;
-
             if (valuePopup) valuePopup.remove();
 
             const lng = e.lngLat.lng;
@@ -274,32 +340,41 @@
 
             let html = '';
             if (val !== null) {
+                const displayVal = formatValue(name, val);
+                const unit = cfg?.unit || '';
                 html = `
                     <div class="popup-layer-name">${cfg?.title || name}</div>
-                    <div class="popup-value">${formatValue(name, val)}</div>
+                    <div>
+                        <span class="popup-value">${displayVal}</span>
+                        <span class="popup-unit">${unit}</span>
+                    </div>
                     <div class="popup-coords">${lat.toFixed(3)}°, ${lng.toFixed(3)}°</div>
                 `;
             } else {
                 html = `
                     <div class="popup-layer-name">${cfg?.title || name}</div>
-                    <div class="popup-unavailable">Data not available</div>
+                    <div class="popup-unavailable">No data available at this location</div>
                     <div class="popup-coords">${lat.toFixed(3)}°, ${lng.toFixed(3)}°</div>
                 `;
             }
 
-            valuePopup = new mapboxgl.Popup({ closeButton: true, closeOnClick: true })
-                .setLngLat([lng, lat])
-                .setHTML(html)
-                .addTo(map);
+            valuePopup = new mapboxgl.Popup({
+                closeButton: true,
+                closeOnClick: false,
+                maxWidth: '320px'
+            })
+            .setLngLat([lng, lat])
+            .setHTML(html)
+            .addTo(map);
         });
 
         map.doubleClickZoom.disable();
 
-        // ── Initial setup ────────────────────────────────────────────────────────
+        // Initial setup
         activeLayer = getSelectedLayer();
         updateLegend(activeLayer);
 
-        // ── Metadata fetch ───────────────────────────────────────────────────────
+        // Metadata fetch
         fetch('./data/metadata.json')
             .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(meta => {
@@ -312,6 +387,7 @@
 
                 const b = meta.bounds;
                 const newBounds = [b[0][0], b[0][1], b[1][0], b[1][1]];
+
                 if (map.isStyleLoaded()) {
                     applyBounds(newBounds);
                 } else {
@@ -320,7 +396,7 @@
 
                 if (meta.data_rows && meta.data_cols) {
                     dataMeta = { rows: meta.data_rows, cols: meta.data_cols };
-                    loadLayerData(activeLayer);
+                    loadLayerData(activeLayer);           // ← fix: start loading initial layer data
                 }
 
                 if (map.isStyleLoaded()) {

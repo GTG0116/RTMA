@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>RTMA Weather Viewer</title>
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
     <style>
@@ -130,7 +132,7 @@
             temp:     { title:'Temperature (°F)',       min:-20, max:110, gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
             wind:     { title:'Wind Speed (mph)',       min:0,   max:60,  gradient:'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)', unit:' mph' },
             apparent: { title:'Apparent Temperature (°F)', min:-30, max:120, gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
-            vis:      { title:'Visibility (mi)',        min:0,   max:10,  gradient:'linear-gradient(to right, #4b0082, #ff4500, #ffff00)', unit:' mi' },  // Purple (0) to orange to yellow (10)
+            vis:      { title:'Visibility (mi)',        min:0,   max:10,  gradient:'linear-gradient(to right, #4b0082, #ff4500, #ffff00)', unit:' mi' },
             cloud:    { title:'Cloud Cover (%)',        min:0,   max:100, gradient:'linear-gradient(to right,#f0f9ff,#e0f2fe,#bae6fd,#7dd3fc,#38bdf8,#0ea5e9)', unit:'%' },
             rh:       { title:'Relative Humidity (%)',  min:0,   max:100, gradient:'linear-gradient(to right,#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58)', unit:'%' }
         };
@@ -183,18 +185,35 @@
         }
 
         function showLayer(val) {
+            if (activeLayer === val) return; // No change
+
+            // Hide previous layer if exists
+            if (activeLayer) {
+                const prevLayerId = activeLayer + '-layer';
+                if (map.getLayer(prevLayerId)) {
+                    map.setLayoutProperty(prevLayerId, 'visibility', 'none');
+                }
+            }
+
             activeLayer = val;
+
             if (!map.isStyleLoaded()) {
                 updateLegend(val);
                 loadLayerData(val);
                 return;
             }
-            ALL_LAYERS.forEach(name => {
-                const layerId = name + '-layer';
-                if (map.getLayer(layerId)) {
-                    map.setLayoutProperty(layerId, 'visibility', name === val ? 'visible' : 'none');
-                }
-            });
+
+            // Lazily add the new layer if not present
+            const layerId = val + '-layer';
+            if (!map.getLayer(layerId)) {
+                const coords = toMapboxCoords(boundsArr);
+                const beforeId = getFirstLabelLayerId();
+                addImageLayer(val, coords, beforeId);
+            } else {
+                // Just show it
+                map.setLayoutProperty(layerId, 'visibility', 'visible');
+            }
+
             updateLegend(val);
             loadLayerData(val);
         }
@@ -240,24 +259,30 @@
             return undefined;
         }
 
+        function addImageLayer(name, coords, beforeId) {
+            if (map.getSource(name + '-src')) return;
+
+            map.addSource(name + '-src', {
+                type: 'image',
+                url: `./data/${name}.png`,
+                coordinates: coords
+            });
+
+            map.addLayer({
+                id: name + '-layer',
+                type: 'raster',
+                source: name + '-src',
+                paint: { 'raster-opacity': parseFloat(opacitySlider.value) / 100 },
+                layout: { visibility: 'visible' }
+            }, beforeId);
+        }
+
         map.on('load', () => {
             const coords = toMapboxCoords(boundsArr);
             const beforeId = getFirstLabelLayerId();
 
-            ALL_LAYERS.forEach(name => {
-                map.addSource(name + '-src', {
-                    type: 'image',
-                    url: `./data/${name}.png`,
-                    coordinates: coords
-                });
-                map.addLayer({
-                    id: name + '-layer',
-                    type: 'raster',
-                    source: name + '-src',
-                    paint: { 'raster-opacity': 0.65 },
-                    layout: { visibility: name === activeLayer ? 'visible' : 'none' }  // Initial layer visible
-                }, beforeId);
-            });
+            // Add only the initial active layer
+            addImageLayer(activeLayer, coords, beforeId);
 
             // ── Add visible country, state & county boundaries on top ──────
             map.addLayer({
@@ -271,7 +296,7 @@
                     'line-width': 2,
                     'line-opacity': 0.6
                 }
-            });  // No beforeId to place on top
+            });
 
             map.addLayer({
                 id: 'states-outline',
@@ -284,7 +309,7 @@
                     'line-width': 1.2,
                     'line-opacity': 0.45
                 }
-            });  // On top
+            });
 
             map.addLayer({
                 id: 'states-labels',
@@ -305,7 +330,7 @@
                     'text-halo-width': 1.5,
                     'text-halo-blur': 1
                 }
-            });  // On top
+            });
 
             map.addLayer({
                 id: 'counties-outline',
@@ -319,14 +344,14 @@
                     'line-width': 0.8,
                     'line-opacity': 0.25
                 }
-            });  // On top
+            });
 
             if (pendingBounds) {
                 applyBounds(pendingBounds);
                 pendingBounds = null;
             }
 
-            showLayer(activeLayer);  // Ensure initial visibility and data load
+            updateLegend(activeLayer);
         });
 
         // Opacity slider

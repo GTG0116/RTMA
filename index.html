@@ -83,6 +83,14 @@
 
         /* Hide unwanted Mapbox elements */
         .mapboxgl-ctrl-logo, .mapboxgl-ctrl-bottom-right { display:none !important; }
+
+        /* Mobile optimizations to prevent crashes */
+        @media (max-width: 768px) {
+            #ui, #legend, .mapboxgl-popup-content {
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -122,7 +130,7 @@
             temp:     { title:'Temperature (°F)',       min:-20, max:110, gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
             wind:     { title:'Wind Speed (mph)',       min:0,   max:60,  gradient:'linear-gradient(to right,#440154,#3b528b,#21908c,#5dc863,#fde725)', unit:' mph' },
             apparent: { title:'Apparent Temperature (°F)', min:-30, max:120, gradient:'linear-gradient(to right,#30123b,#3c59ff,#00ffff,#7cff00,#ffff00,#ff7f00,#ff0000)', unit:'°F' },
-            vis:      { title:'Visibility (mi)',        min:0,   max:10,  gradient:'linear-gradient(to right,#fef3c7,#fbbf24,#d97706,#b45309)', unit:' mi' },
+            vis:      { title:'Visibility (mi)',        min:0,   max:10,  gradient:'linear-gradient(to right, #4b0082, #ff4500, #ffff00)', unit:' mi' },  // Purple (0) to orange to yellow (10)
             cloud:    { title:'Cloud Cover (%)',        min:0,   max:100, gradient:'linear-gradient(to right,#f0f9ff,#e0f2fe,#bae6fd,#7dd3fc,#38bdf8,#0ea5e9)', unit:'%' },
             rh:       { title:'Relative Humidity (%)',  min:0,   max:100, gradient:'linear-gradient(to right,#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58)', unit:'%' }
         };
@@ -247,11 +255,24 @@
                     type: 'raster',
                     source: name + '-src',
                     paint: { 'raster-opacity': 0.65 },
-                    layout: { visibility: 'none' }
+                    layout: { visibility: name === activeLayer ? 'visible' : 'none' }  // Initial layer visible
                 }, beforeId);
             });
 
-            // ── Add visible state & county boundaries ───────────────────────
+            // ── Add visible country, state & county boundaries on top ──────
+            map.addLayer({
+                id: 'country-outline',
+                type: 'line',
+                source: { type: 'vector', url: 'mapbox://mapbox.mapbox-streets-v8' },
+                'source-layer': 'admin',
+                filter: ['==', 'admin_level', 0],
+                paint: {
+                    'line-color': '#3b82f6',
+                    'line-width': 2,
+                    'line-opacity': 0.6
+                }
+            });  // No beforeId to place on top
+
             map.addLayer({
                 id: 'states-outline',
                 type: 'line',
@@ -263,7 +284,7 @@
                     'line-width': 1.2,
                     'line-opacity': 0.45
                 }
-            }, beforeId);
+            });  // On top
 
             map.addLayer({
                 id: 'states-labels',
@@ -284,7 +305,7 @@
                     'text-halo-width': 1.5,
                     'text-halo-blur': 1
                 }
-            }, beforeId);
+            });  // On top
 
             map.addLayer({
                 id: 'counties-outline',
@@ -298,14 +319,14 @@
                     'line-width': 0.8,
                     'line-opacity': 0.25
                 }
-            }, beforeId);
+            });  // On top
 
             if (pendingBounds) {
                 applyBounds(pendingBounds);
                 pendingBounds = null;
             }
 
-            showLayer(activeLayer);
+            showLayer(activeLayer);  // Ensure initial visibility and data load
         });
 
         // Opacity slider
@@ -396,7 +417,7 @@
 
                 if (meta.data_rows && meta.data_cols) {
                     dataMeta = { rows: meta.data_rows, cols: meta.data_cols };
-                    loadLayerData(activeLayer);           // ← fix: start loading initial layer data
+                    loadLayerData(activeLayer);
                 }
 
                 if (map.isStyleLoaded()) {

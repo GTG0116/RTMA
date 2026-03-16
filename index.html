@@ -86,6 +86,26 @@
         /* Hide unwanted Mapbox elements */
         .mapboxgl-ctrl-logo, .mapboxgl-ctrl-bottom-right { display:none !important; }
 
+        /* ── Hover Picker Tooltip ─────────────────────────────────── */
+        #hover-tooltip {
+            position: fixed;
+            display: none;
+            z-index: 1000;
+            background: rgba(6, 18, 52, 0.92);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(100, 160, 255, 0.35);
+            border-radius: 8px;
+            padding: 6px 11px;
+            color: #e0f0ff;
+            font-size: 13px;
+            font-weight: 600;
+            pointer-events: none;
+            white-space: nowrap;
+            box-shadow: 0 4px 16px rgba(0,0,50,0.5);
+            transform: translate(12px, -50%);
+        }
+
         /* Mobile optimizations to prevent crashes */
         @media (max-width: 768px) {
             #ui, #legend, .mapboxgl-popup-content {
@@ -97,6 +117,7 @@
 </head>
 <body>
     <div id="map"></div>
+    <div id="hover-tooltip"></div>
 
     <div id="ui">
         <div id="status" class="loading">Loading...</div>
@@ -418,6 +439,41 @@
         });
 
         map.doubleClickZoom.disable();
+
+        // ── Hover Picker ─────────────────────────────────────────────
+        const hoverTooltip = document.getElementById('hover-tooltip');
+        let hoverThrottle = null;
+
+        map.on('mousemove', e => {
+            if (hoverThrottle) return;
+            hoverThrottle = setTimeout(() => { hoverThrottle = null; }, 40);
+
+            const name = getSelectedLayer();
+            if (!dataCache[name] || !dataMeta) {
+                hoverTooltip.style.display = 'none';
+                return;
+            }
+
+            const val = lookupValue(name, e.lngLat.lng, e.lngLat.lat);
+            if (val === null) {
+                hoverTooltip.style.display = 'none';
+                return;
+            }
+
+            const cfg = legendConfigs[name];
+            const displayVal = formatValue(name, val);
+            const unit = cfg?.unit || '';
+            hoverTooltip.textContent = `${displayVal}${unit}`;
+
+            const rect = map.getCanvas().getBoundingClientRect();
+            hoverTooltip.style.left = (rect.left + e.point.x) + 'px';
+            hoverTooltip.style.top  = (rect.top  + e.point.y) + 'px';
+            hoverTooltip.style.display = 'block';
+        });
+
+        map.getCanvas().addEventListener('mouseleave', () => {
+            hoverTooltip.style.display = 'none';
+        });
 
         // Initial setup
         activeLayer = getSelectedLayer();

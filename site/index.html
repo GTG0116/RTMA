@@ -251,7 +251,8 @@
             const arr = dataCache[name];
             if (!arr || !dataMeta) return null;
             const { rows, cols } = dataMeta;
-            // boundsArr is [sw_lat, sw_lon, ne_lat, ne_lon] — actual SW/NE corner pixels
+            // boundsArr is [sw_lat, sw_lon, ne_lat, ne_lon] — regular lat/lon grid extent
+            // Reprojected grid → linear interpolation is exact (no LCC distortion)
             const [swLat, swLon, neLat, neLon] = boundsArr;
             const rowFrac = (lat - swLat) / (neLat - swLat);
             const colFrac = (lng - swLon) / (neLon - swLon);
@@ -490,7 +491,8 @@
                 const ts = new Date(meta.timestamp).toLocaleString();
                 statusText.innerHTML = `<span style="color:#22c55e;font-weight:600">Live</span> — ${ts}`;
 
-                // corners: [[NW_lng,NW_lat],[NE_lng,NE_lat],[SE_lng,SE_lat],[SW_lng,SW_lat]]
+                // corners: rectangular lat/lon bounds — [[W,N],[E,N],[E,S],[W,S]]
+                // Data is reprojected to equirectangular so linear interpolation is exact
                 const newCorners = meta.corners;
                 // bounds: [[sw_lat,sw_lon],[ne_lat,ne_lon]]
                 const b = meta.bounds;

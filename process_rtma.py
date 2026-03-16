@@ -133,7 +133,7 @@ def main():
     data_timestamp = None
     for d in range(0, 3):
         day = (current_day - timedelta(days=d)).strftime('%Y%m%d')
-        prefix = f"rtma2p5.{day}/"
+        prefix = f"rtma2p5_ru.{day}/"
         resp = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
 
         if 'Contents' in resp:
@@ -142,9 +142,14 @@ def main():
             if keys:
                 target_key = sorted(keys)[-1]
                 parts = target_key.split('.')
-                hour_str = parts[2][1:3]  # tHHHz — parts[2] is 't00z', e.g. 't06z'[1:3]='06'
+                # RTMA-RU files: rtma2p5_ru.tHHMMz.2dvaranl_ndfd.grb2
+                # parts[2] = 'tHHMMz', e.g. 't0815z' → hour='08', minute='15'
+                time_part = parts[2]  # e.g. 't0815z'
+                hour_str = time_part[1:3]
+                minute_str = time_part[3:5]
                 data_timestamp = datetime(int(day[0:4]), int(day[4:6]), int(day[6:8]),
-                                          int(hour_str), 0, 0, tzinfo=timezone.utc).isoformat()
+                                          int(hour_str), int(minute_str), 0,
+                                          tzinfo=timezone.utc).isoformat()
                 break
 
     if target_key is None:

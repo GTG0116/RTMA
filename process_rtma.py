@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from botocore import UNSIGNED
 from botocore.client import Config
 import cfgrib
+from scipy.interpolate import griddata
 plt.switch_backend('Agg')
 
 # --- CONFIG ---
@@ -15,6 +16,51 @@ BUCKET_NAME = 'noaa-rtma-pds'
 REGION = 'us-east-1'
 DATA_DIR = 'site/data'
 DATA_STRIDE = 8  # Downsample factor for interactive lookup binary files
+
+def reproject_to_latlon(data, lats_2d, lons_2d, stride=DATA_STRIDE):
+    """Reproject LCC-gridded data onto a regular lat/lon grid.
+
+    The RTMA NDFD grid uses Lambert Conformal Conic projection.  When a
+    raster image of that grid is placed on a Mercator web-map using only four
+    corner coordinates, Mapbox performs linear (bilinear) interpolation
+    between the corners.  Because the LCC grid's constant-row curves bow
+    northward in the middle, this linear approximation places interior pixels
+    too far south.
+
+    Fix: interpolate the data onto an equally-spaced lat/lon grid of the
+    same dimensions as the stride-downsampled source.  The resulting image
+    can be placed on the map with a simple rectangular bounding box and
+    Mapbox's linear interpolation is then exact.
+
+    Returns (reprojected [row 0 = southernmost], lat_min, lat_max, lon_min, lon_max).
+    """
+    data_sub = data[::stride, ::stride]
+    lats_sub = lats_2d[::stride, ::stride]
+    lons_sub = lons_2d[::stride, ::stride]
+    nrows, ncols = data_sub.shape
+
+    lat_min = float(lats_2d.min())
+    lat_max = float(lats_2d.max())
+    lon_min = float(lons_2d.min())
+    lon_max = float(lons_2d.max())
+
+    values = data_sub.ravel()
+    valid = np.isfinite(values)
+
+    # Target: regular lat/lon grid, row 0 = southernmost (for origin='lower')
+    t_lats = np.linspace(lat_min, lat_max, nrows)
+    t_lons = np.linspace(lon_min, lon_max, ncols)
+    t_lon2d, t_lat2d = np.meshgrid(t_lons, t_lats)
+
+    reprojected = griddata(
+        np.column_stack([lats_sub.ravel()[valid], lons_sub.ravel()[valid]]),
+        values[valid],
+        (t_lat2d, t_lon2d),
+        method='linear',
+        fill_value=np.nan,
+    )
+    return reprojected, lat_min, lat_max, lon_min, lon_max
+
 
 def compute_apparent_temp(temp_k, wind_ms, dpt_k):
     temp_c = temp_k - 273.15
@@ -88,7 +134,8 @@ def save_image_with_alpha(data, alpha_arr, name, cmap, vmin, vmax):
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
     colormap = plt.get_cmap(cmap)
     rgba = colormap(norm(np.ma.masked_invalid(data)))  # (H, W, 4), values 0-1
-    rgba[:, :, 3] = np.clip(alpha_arr, 0, 1)
+    # Out-of-domain pixels (NaN from reprojection) should be fully transparent
+    rgba[:, :, 3] = np.where(np.isfinite(data), np.clip(alpha_arr, 0, 1), 0)
 
     height, width = data.shape
     aspect = height / float(width)
@@ -165,9 +212,11 @@ def main():
 
     processed_vars = []
     vars_data = {}
-    data_shape = None  # (rows, cols) of downsampled data grid
+    data_shape = None  # (rows, cols) of the reprojected lat/lon grid
     meta_bounds = None
     meta_corners = None
+    lats_2d = None   # shared LCC lat/lon coordinate arrays for reprojection
+    lons_2d = None
 
     for i, ds in enumerate(datasets):
         print(f"Dataset #{i}: {list(ds.data_vars)}")
@@ -177,47 +226,48 @@ def main():
             if t_key in ds and 'temp' not in processed_vars:
                 print(f"-> Temperature ({t_key})")
                 temp_f = (ds[t_key] - 273.15) * 9/5 + 32
-                save_image(temp_f.values, 'temp', 'turbo', -20, 110)
-                shape = save_data(temp_f.values, 'temp')
+                vars_data['temp_k'] = ds[t_key].values
+
+                # Extract LCC coordinate arrays (shared by all variables on this grid)
+                lats_2d = ds[t_key].latitude.values
+                lons_2d = ds[t_key].longitude.values.copy()
+                if lons_2d.max() >= 180:  # 0-360 → -180 to 180
+                    lons_2d = lons_2d - 360
+
+                # Reproject LCC → regular lat/lon to eliminate south-bias from
+                # linear Mapbox interpolation between LCC corner coordinates.
+                reproj, lat_min, lat_max, lon_min, lon_max = reproject_to_latlon(
+                    temp_f.values, lats_2d, lons_2d)
+                save_image(reproj, 'temp', 'turbo', -20, 110)
+                shape = save_data(reproj, 'temp', stride=1)
                 if shape and data_shape is None:
                     data_shape = shape
                 processed_vars.append('temp')
-                vars_data['temp_k'] = ds[t_key].values
 
-                # Extract actual corner coordinates of the grid.
-                # The RTMA NDFD grid is Lambert Conformal Conic; using overall
-                # min/max lat/lon mis-positions the image overlay.  Instead use
-                # the four corner pixels: row 0 = south (image bottom with
-                # origin='lower'), row -1 = north (image top).
-                lats = ds[t_key].latitude.values
-                lons = ds[t_key].longitude.values.copy()
-                if lons.max() >= 180:  # 0-360 → -180 to 180
-                    lons = lons - 360
-                sw_lat, sw_lon = float(lats[0,  0]),  float(lons[0,  0])
-                se_lat, se_lon = float(lats[0, -1]),  float(lons[0, -1])
-                ne_lat, ne_lon = float(lats[-1, -1]), float(lons[-1, -1])
-                nw_lat, nw_lon = float(lats[-1,  0]), float(lons[-1,  0])
-                # Mapbox image corners: [topLeft, topRight, bottomRight, bottomLeft]
-                # each as [lng, lat]
+                # Rectangular lat/lon bounds — correct for equirectangular image
                 meta_corners = [
-                    [nw_lon, nw_lat],
-                    [ne_lon, ne_lat],
-                    [se_lon, se_lat],
-                    [sw_lon, sw_lat],
+                    [lon_min, lat_max],  # topLeft  (NW)
+                    [lon_max, lat_max],  # topRight (NE)
+                    [lon_max, lat_min],  # bottomRight (SE)
+                    [lon_min, lat_min],  # bottomLeft  (SW)
                 ]
-                # SW → NE for value-lookup interpolation
-                meta_bounds = [[sw_lat, sw_lon], [ne_lat, ne_lon]]
+                meta_bounds = [[lat_min, lon_min], [lat_max, lon_max]]
 
         # Wind
         if 'u10' in ds and 'v10' in ds and 'wind' not in processed_vars:
             print("-> Wind (u10/v10)")
             wind_mph = np.sqrt(ds['u10']**2 + ds['v10']**2) * 2.23694
-            save_image(wind_mph.values, 'wind', 'viridis', 0, 60)
-            shape = save_data(wind_mph.values, 'wind')
+            vars_data['wind_ms'] = np.sqrt(ds['u10'].values**2 + ds['v10'].values**2)
+            if lats_2d is not None:
+                reproj, *_ = reproject_to_latlon(wind_mph.values, lats_2d, lons_2d)
+                save_image(reproj, 'wind', 'viridis', 0, 60)
+                shape = save_data(reproj, 'wind', stride=1)
+            else:
+                save_image(wind_mph.values, 'wind', 'viridis', 0, 60)
+                shape = save_data(wind_mph.values, 'wind')
             if shape and data_shape is None:
                 data_shape = shape
             processed_vars.append('wind')
-            vars_data['wind_ms'] = np.sqrt(ds['u10'].values**2 + ds['v10'].values**2)
 
         # Dew point for apparent temp / relative humidity
         for d_key in ['d2m', 'dpt', '2d']:
@@ -230,14 +280,20 @@ def main():
             if v_key in ds and 'vis' not in processed_vars:
                 print(f"-> Visibility ({v_key})")
                 vis_miles = ds[v_key].values / 1609.34
-                # Transparent at perfect visibility (10 mi), opaque at 7 mi and below
                 vis_alpha = np.clip((10.0 - vis_miles) / (10.0 - 7.0), 0, 1)
-                save_image_with_alpha(vis_miles, vis_alpha, 'vis', 'plasma', 0, 10)
-                shape = save_data(vis_miles, 'vis')
+                vars_data['vis_miles'] = vis_miles
+                if lats_2d is not None:
+                    reproj_v, *_ = reproject_to_latlon(vis_miles, lats_2d, lons_2d)
+                    reproj_a, *_ = reproject_to_latlon(vis_alpha, lats_2d, lons_2d)
+                    reproj_a = np.where(np.isfinite(reproj_v), np.clip(reproj_a, 0, 1), 0)
+                    save_image_with_alpha(reproj_v, reproj_a, 'vis', 'plasma', 0, 10)
+                    shape = save_data(reproj_v, 'vis', stride=1)
+                else:
+                    save_image_with_alpha(vis_miles, vis_alpha, 'vis', 'plasma', 0, 10)
+                    shape = save_data(vis_miles, 'vis')
                 if shape and data_shape is None:
                     data_shape = shape
                 processed_vars.append('vis')
-                vars_data['vis_miles'] = vis_miles
                 break
 
         # Cloud cover (total cloud cover in %)
@@ -245,10 +301,16 @@ def main():
             if c_key in ds and 'cloud' not in processed_vars:
                 print(f"-> Cloud Cover ({c_key})")
                 cloud_pct = ds[c_key].values
-                # Transparent at 0% cloud cover, opaque at 40% and above
                 cloud_alpha = np.clip(cloud_pct / 40.0, 0, 1)
-                save_image_with_alpha(cloud_pct, cloud_alpha, 'cloud', 'Blues', 0, 100)
-                shape = save_data(cloud_pct, 'cloud')
+                if lats_2d is not None:
+                    reproj_c, *_ = reproject_to_latlon(cloud_pct, lats_2d, lons_2d)
+                    reproj_ca, *_ = reproject_to_latlon(cloud_alpha, lats_2d, lons_2d)
+                    reproj_ca = np.where(np.isfinite(reproj_c), np.clip(reproj_ca, 0, 1), 0)
+                    save_image_with_alpha(reproj_c, reproj_ca, 'cloud', 'Blues', 0, 100)
+                    shape = save_data(reproj_c, 'cloud', stride=1)
+                else:
+                    save_image_with_alpha(cloud_pct, cloud_alpha, 'cloud', 'Blues', 0, 100)
+                    shape = save_data(cloud_pct, 'cloud')
                 if shape and data_shape is None:
                     data_shape = shape
                 processed_vars.append('cloud')
@@ -257,35 +319,43 @@ def main():
     # Compute apparent temperature if all components available
     if 'temp_k' in vars_data and 'wind_ms' in vars_data and 'dpt_k' in vars_data:
         apparent_f = compute_apparent_temp(vars_data['temp_k'], vars_data['wind_ms'], vars_data['dpt_k'])
-        save_image(apparent_f, 'apparent', 'turbo', -40, 140)
-        save_data(apparent_f, 'apparent')
+        if lats_2d is not None:
+            reproj_app, *_ = reproject_to_latlon(apparent_f, lats_2d, lons_2d)
+            save_image(reproj_app, 'apparent', 'turbo', -40, 140)
+            save_data(reproj_app, 'apparent', stride=1)
+        else:
+            save_image(apparent_f, 'apparent', 'turbo', -40, 140)
+            save_data(apparent_f, 'apparent')
         processed_vars.append('apparent')
 
     # Compute relative humidity if temp and dew point are available
     if 'temp_k' in vars_data and 'dpt_k' in vars_data and 'rh' not in processed_vars:
         rh = compute_relative_humidity(vars_data['temp_k'], vars_data['dpt_k'])
-        save_image(rh, 'rh', 'YlGnBu', 0, 100)
-        save_data(rh, 'rh')
+        if lats_2d is not None:
+            reproj_rh, *_ = reproject_to_latlon(rh, lats_2d, lons_2d)
+            save_image(reproj_rh, 'rh', 'YlGnBu', 0, 100)
+            save_data(reproj_rh, 'rh', stride=1)
+        else:
+            save_image(rh, 'rh', 'YlGnBu', 0, 100)
+            save_data(rh, 'rh')
         processed_vars.append('rh')
 
-    # Fallback bounds/corners if temp not found
+    # Fallback bounds/corners if no temperature variable was found
     if meta_bounds is None and datasets:
         ds = datasets[0]
         lats = ds.latitude.values
         lons = ds.longitude.values.copy()
         if lons.max() >= 180:
             lons = lons - 360
-        sw_lat, sw_lon = float(lats[0,  0]),  float(lons[0,  0])
-        se_lat, se_lon = float(lats[0, -1]),  float(lons[0, -1])
-        ne_lat, ne_lon = float(lats[-1, -1]), float(lons[-1, -1])
-        nw_lat, nw_lon = float(lats[-1,  0]), float(lons[-1,  0])
+        lat_min, lat_max = float(lats.min()), float(lats.max())
+        lon_min, lon_max = float(lons.min()), float(lons.max())
         meta_corners = [
-            [nw_lon, nw_lat],
-            [ne_lon, ne_lat],
-            [se_lon, se_lat],
-            [sw_lon, sw_lat],
+            [lon_min, lat_max],
+            [lon_max, lat_max],
+            [lon_max, lat_min],
+            [lon_min, lat_min],
         ]
-        meta_bounds = [[sw_lat, sw_lon], [ne_lat, ne_lon]]
+        meta_bounds = [[lat_min, lon_min], [lat_max, lon_max]]
 
     # Write metadata
     meta = {

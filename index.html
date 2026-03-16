@@ -167,15 +167,15 @@
 
         let activeLayer = 'temp';
         let pendingBounds = null;
+        let pendingCorners = null;
         let dataCache = {};
         let dataMeta = null;
         let valuePopup = null;
+        // boundsArr: [sw_lat, sw_lon, ne_lat, ne_lon] — actual SW/NE corner pixels
         let boundsArr = [24.0, -126.0, 50.0, -66.0]; // fallback
-
-        function toMapboxCoords(b) {
-            const [minLat, minLon, maxLat, maxLon] = b;
-            return [[minLon, maxLat], [maxLon, maxLat], [maxLon, minLat], [minLon, minLat]];
-        }
+        // cornersArr: Mapbox image corners [topLeft, topRight, bottomRight, bottomLeft]
+        // each as [lng, lat] — actual grid corners for correct Lambert projection placement
+        let cornersArr = [[-126.0, 50.0], [-66.0, 50.0], [-66.0, 24.0], [-126.0, 24.0]]; // fallback
 
         function getSelectedLayer() {
             const checked = document.querySelector('input[name="layer"]:checked');
@@ -196,12 +196,12 @@
             legendDiv.style.display = 'block';
         }
 
-        function applyBounds(b) {
-            boundsArr = b;
-            const coords = toMapboxCoords(b);
+        function applyMeta(corners, bounds) {
+            cornersArr = corners;
+            boundsArr = bounds; // [sw_lat, sw_lon, ne_lat, ne_lon]
             ALL_LAYERS.forEach(name => {
                 const src = map.getSource(name + '-src');
-                if (src) src.setCoordinates(coords);
+                if (src) src.setCoordinates(corners);
             });
         }
 
@@ -227,9 +227,8 @@
             // Lazily add the new layer if not present
             const layerId = val + '-layer';
             if (!map.getLayer(layerId)) {
-                const coords = toMapboxCoords(boundsArr);
                 const beforeId = getFirstLabelLayerId();
-                addImageLayer(val, coords, beforeId);
+                addImageLayer(val, cornersArr, beforeId);
             } else {
                 // Just show it
                 map.setLayoutProperty(layerId, 'visibility', 'visible');
@@ -252,9 +251,10 @@
             const arr = dataCache[name];
             if (!arr || !dataMeta) return null;
             const { rows, cols } = dataMeta;
-            const [minLat, minLon, maxLat, maxLon] = boundsArr;
-            const rowFrac = (lat - minLat) / (maxLat - minLat);
-            const colFrac = (lng - minLon) / (maxLon - minLon);
+            // boundsArr is [sw_lat, sw_lon, ne_lat, ne_lon] — actual SW/NE corner pixels
+            const [swLat, swLon, neLat, neLon] = boundsArr;
+            const rowFrac = (lat - swLat) / (neLat - swLat);
+            const colFrac = (lng - swLon) / (neLon - swLon);
             if (rowFrac < 0 || rowFrac > 1 || colFrac < 0 || colFrac > 1) return null;
             const row = Math.min(rows - 1, Math.max(0, Math.round(rowFrac * (rows - 1))));
             const col = Math.min(cols - 1, Math.max(0, Math.round(colFrac * (cols - 1))));
@@ -302,11 +302,10 @@
         }
 
         map.on('load', () => {
-            const coords = toMapboxCoords(boundsArr);
             const beforeId = getFirstLabelLayerId();
 
             // Add only the initial active layer
-            addImageLayer(activeLayer, coords, beforeId);
+            addImageLayer(activeLayer, cornersArr, beforeId);
 
             // ── Add visible country, state & county boundaries on top ──────
             map.addLayer({
@@ -370,8 +369,9 @@
                 }
             });
 
-            if (pendingBounds) {
-                applyBounds(pendingBounds);
+            if (pendingCorners) {
+                applyMeta(pendingCorners, pendingBounds);
+                pendingCorners = null;
                 pendingBounds = null;
             }
 
@@ -490,12 +490,16 @@
                 const ts = new Date(meta.timestamp).toLocaleString();
                 statusText.innerHTML = `<span style="color:#22c55e;font-weight:600">Live</span> — ${ts}`;
 
+                // corners: [[NW_lng,NW_lat],[NE_lng,NE_lat],[SE_lng,SE_lat],[SW_lng,SW_lat]]
+                const newCorners = meta.corners;
+                // bounds: [[sw_lat,sw_lon],[ne_lat,ne_lon]]
                 const b = meta.bounds;
-                const newBounds = [b[0][0], b[0][1], b[1][0], b[1][1]];
+                const newBounds = [b[0][0], b[0][1], b[1][0], b[1][1]]; // [sw_lat,sw_lon,ne_lat,ne_lon]
 
                 if (map.isStyleLoaded()) {
-                    applyBounds(newBounds);
+                    applyMeta(newCorners, newBounds);
                 } else {
+                    pendingCorners = newCorners;
                     pendingBounds = newBounds;
                 }
 

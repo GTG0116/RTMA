@@ -75,6 +75,37 @@ def save_image(data, name, cmap, vmin, vmax):
     plt.close(fig)
     print(f"✅ SAVED: {output_path} ({os.path.getsize(output_path)} bytes)")
 
+
+def save_image_with_alpha(data, alpha_arr, name, cmap, vmin, vmax):
+    """Save image with per-pixel alpha channel (0=transparent, 1=opaque)."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    output_path = os.path.join(DATA_DIR, f"{name}.png")
+
+    if data is None or np.isnan(data).all():
+        print(f"!!! Skipping {name}: Data is null or all NaNs")
+        return
+
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    colormap = plt.get_cmap(cmap)
+    rgba = colormap(norm(np.ma.masked_invalid(data)))  # (H, W, 4), values 0-1
+    rgba[:, :, 3] = np.clip(alpha_arr, 0, 1)
+
+    height, width = data.shape
+    aspect = height / float(width)
+    fig_width = 8
+    fig_height = fig_width * aspect
+    dpi = 150
+
+    fig = plt.figure(figsize=(fig_width, fig_height), frameon=False)
+    ax = plt.Axes(fig, [0., 0., 1., 1.])
+    ax.set_axis_off()
+    fig.add_axes(ax)
+    ax.imshow(rgba, origin='lower', aspect='auto')
+
+    plt.savefig(output_path, transparent=True, pad_inches=0, format='png', dpi=dpi)
+    plt.close(fig)
+    print(f"✅ SAVED: {output_path} ({os.path.getsize(output_path)} bytes)")
+
 def save_data(data, name, stride=DATA_STRIDE):
     """Save a downsampled float32 binary data file for interactive value lookups.
 
@@ -179,7 +210,9 @@ def main():
             if v_key in ds and 'vis' not in processed_vars:
                 print(f"-> Visibility ({v_key})")
                 vis_miles = ds[v_key].values / 1609.34
-                save_image(vis_miles, 'vis', 'plasma', 0, 10)
+                # Transparent at perfect visibility (10 mi), opaque at 7 mi and below
+                vis_alpha = np.clip((10.0 - vis_miles) / (10.0 - 7.0), 0, 1)
+                save_image_with_alpha(vis_miles, vis_alpha, 'vis', 'plasma', 0, 10)
                 shape = save_data(vis_miles, 'vis')
                 if shape and data_shape is None:
                     data_shape = shape
@@ -192,7 +225,9 @@ def main():
             if c_key in ds and 'cloud' not in processed_vars:
                 print(f"-> Cloud Cover ({c_key})")
                 cloud_pct = ds[c_key].values
-                save_image(cloud_pct, 'cloud', 'Blues', 0, 100)
+                # Transparent at 0% cloud cover, opaque at 40% and above
+                cloud_alpha = np.clip(cloud_pct / 40.0, 0, 1)
+                save_image_with_alpha(cloud_pct, cloud_alpha, 'cloud', 'Blues', 0, 100)
                 shape = save_data(cloud_pct, 'cloud')
                 if shape and data_shape is None:
                     data_shape = shape

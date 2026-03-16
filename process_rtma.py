@@ -167,6 +167,7 @@ def main():
     vars_data = {}
     data_shape = None  # (rows, cols) of downsampled data grid
     meta_bounds = None
+    meta_corners = None
 
     for i, ds in enumerate(datasets):
         print(f"Dataset #{i}: {list(ds.data_vars)}")
@@ -183,15 +184,29 @@ def main():
                 processed_vars.append('temp')
                 vars_data['temp_k'] = ds[t_key].values
 
-                # Metadata with lon fix (0-360 → -180 to 180)
-                min_lat = float(ds.latitude.min())
-                max_lat = float(ds.latitude.max())
-                min_lon = float(ds.longitude.min())
-                max_lon = float(ds.longitude.max())
-                if min_lon >= 180:  # 0-360 case
-                    min_lon -= 360
-                    max_lon -= 360
-                meta_bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+                # Extract actual corner coordinates of the grid.
+                # The RTMA NDFD grid is Lambert Conformal Conic; using overall
+                # min/max lat/lon mis-positions the image overlay.  Instead use
+                # the four corner pixels: row 0 = south (image bottom with
+                # origin='lower'), row -1 = north (image top).
+                lats = ds[t_key].latitude.values
+                lons = ds[t_key].longitude.values.copy()
+                if lons.max() >= 180:  # 0-360 → -180 to 180
+                    lons = lons - 360
+                sw_lat, sw_lon = float(lats[0,  0]),  float(lons[0,  0])
+                se_lat, se_lon = float(lats[0, -1]),  float(lons[0, -1])
+                ne_lat, ne_lon = float(lats[-1, -1]), float(lons[-1, -1])
+                nw_lat, nw_lon = float(lats[-1,  0]), float(lons[-1,  0])
+                # Mapbox image corners: [topLeft, topRight, bottomRight, bottomLeft]
+                # each as [lng, lat]
+                meta_corners = [
+                    [nw_lon, nw_lat],
+                    [ne_lon, ne_lat],
+                    [se_lon, se_lat],
+                    [sw_lon, sw_lat],
+                ]
+                # SW → NE for value-lookup interpolation
+                meta_bounds = [[sw_lat, sw_lon], [ne_lat, ne_lon]]
 
         # Wind
         if 'u10' in ds and 'v10' in ds and 'wind' not in processed_vars:
@@ -253,22 +268,30 @@ def main():
         save_data(rh, 'rh')
         processed_vars.append('rh')
 
-    # Fallback bounds if temp not found
+    # Fallback bounds/corners if temp not found
     if meta_bounds is None and datasets:
         ds = datasets[0]
-        min_lat = float(ds.latitude.min())
-        max_lat = float(ds.latitude.max())
-        min_lon = float(ds.longitude.min())
-        max_lon = float(ds.longitude.max())
-        if min_lon >= 180:
-            min_lon -= 360
-            max_lon -= 360
-        meta_bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+        lats = ds.latitude.values
+        lons = ds.longitude.values.copy()
+        if lons.max() >= 180:
+            lons = lons - 360
+        sw_lat, sw_lon = float(lats[0,  0]),  float(lons[0,  0])
+        se_lat, se_lon = float(lats[0, -1]),  float(lons[0, -1])
+        ne_lat, ne_lon = float(lats[-1, -1]), float(lons[-1, -1])
+        nw_lat, nw_lon = float(lats[-1,  0]), float(lons[-1,  0])
+        meta_corners = [
+            [nw_lon, nw_lat],
+            [ne_lon, ne_lat],
+            [se_lon, se_lat],
+            [sw_lon, sw_lat],
+        ]
+        meta_bounds = [[sw_lat, sw_lon], [ne_lat, ne_lon]]
 
     # Write metadata
     meta = {
         "timestamp": data_timestamp,
         "bounds": meta_bounds,
+        "corners": meta_corners,
         "data_rows": data_shape[0] if data_shape else None,
         "data_cols": data_shape[1] if data_shape else None,
         "data_stride": DATA_STRIDE

@@ -41,6 +41,14 @@ jobs:
           echo "Checking site/data folder..."
           ls -R site/
 
+      - name: Commit frames to main branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add site/data/
+          git diff --staged --quiet || git commit -m "chore: update RTMA frames"
+          git push origin main
+
       - name: Add .nojekyll
         run: touch site/.nojekyll
 

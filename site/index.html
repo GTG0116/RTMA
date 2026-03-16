@@ -272,7 +272,10 @@
                 id: name + '-layer',
                 type: 'raster',
                 source: name + '-src',
-                paint: { 'raster-opacity': parseFloat(opacitySlider.value) / 100 },
+                paint: {
+                    'raster-opacity': parseFloat(opacitySlider.value) / 100,
+                    'raster-resampling': 'nearest'
+                },
                 layout: { visibility: 'visible' }
             }, beforeId);
         }

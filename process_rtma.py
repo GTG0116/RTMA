@@ -60,9 +60,9 @@ def save_image(data, name, cmap, vmin, vmax):
 
     height, width = data.shape
     aspect = height / float(width)
-    fig_width = 24  # Increased for higher resolution
+    fig_width = 8
     fig_height = fig_width * aspect
-    dpi = 600
+    dpi = 150
 
     fig = plt.figure(figsize=(fig_width, fig_height), frameon=False)
     ax = plt.Axes(fig, [0., 0., 1., 1.])

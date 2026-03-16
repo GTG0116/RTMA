@@ -258,12 +258,15 @@ def main():
             print("-> Wind (u10/v10)")
             wind_mph = np.sqrt(ds['u10']**2 + ds['v10']**2) * 2.23694
             vars_data['wind_ms'] = np.sqrt(ds['u10'].values**2 + ds['v10'].values**2)
+            wind_alpha = np.clip(wind_mph.values / 10.0, 0, 1)
             if lats_2d is not None:
                 reproj, *_ = reproject_to_latlon(wind_mph.values, lats_2d, lons_2d)
-                save_image(reproj, 'wind', 'viridis', 0, 60)
+                reproj_wa, *_ = reproject_to_latlon(wind_alpha, lats_2d, lons_2d)
+                reproj_wa = np.where(np.isfinite(reproj), np.clip(reproj_wa, 0, 1), 0)
+                save_image_with_alpha(reproj, reproj_wa, 'wind', 'viridis', 0, 60)
                 shape = save_data(reproj, 'wind', stride=1)
             else:
-                save_image(wind_mph.values, 'wind', 'viridis', 0, 60)
+                save_image_with_alpha(wind_mph.values, wind_alpha, 'wind', 'viridis', 0, 60)
                 shape = save_data(wind_mph.values, 'wind')
             if shape and data_shape is None:
                 data_shape = shape

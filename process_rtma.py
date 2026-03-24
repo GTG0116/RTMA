@@ -15,25 +15,27 @@ plt.switch_backend('Agg')
 BUCKET_NAME = 'noaa-rtma-pds'
 REGION = 'us-east-1'
 DATA_DIR = 'site/data'
-DATA_STRIDE = 8  # Downsample factor for interactive lookup binary files
+DATA_STRIDE = 4  # Downsample factor for interactive lookup binary files
 
 def reproject_to_latlon(data, lats_2d, lons_2d, stride=DATA_STRIDE):
-    """Reproject LCC-gridded data onto a regular lat/lon grid.
+    """Reproject LCC-gridded data onto a Web Mercator-aligned grid.
 
-    The RTMA NDFD grid uses Lambert Conformal Conic projection.  When a
-    raster image of that grid is placed on a Mercator web-map using only four
-    corner coordinates, Mapbox performs linear (bilinear) interpolation
-    between the corners.  Because the LCC grid's constant-row curves bow
-    northward in the middle, this linear approximation places interior pixels
-    too far south.
+    The RTMA NDFD grid uses Lambert Conformal Conic projection.  Mapbox GL JS
+    displays raster image sources by bilinearly interpolating from the four
+    corner coordinates in Web Mercator screen space.  An equirectangular
+    (uniform-degree) target grid would still mis-align interior pixels because
+    equal-degree latitude steps are NOT equal Mercator-Y steps — mid-CONUS
+    rows can appear up to ~2.7° off from their true position.
 
-    Fix: interpolate the data onto an equally-spaced lat/lon grid of the
-    same dimensions as the stride-downsampled source.  The resulting image
-    can be placed on the map with a simple rectangular bounding box and
-    Mapbox's linear interpolation is then exact.
+    Fix: create a target grid whose rows are equally spaced in Web Mercator Y
+    (metres).  Each image row then corresponds to an equal Mercator-Y step,
+    which Mapbox interpolates correctly, giving exact alignment with the base
+    map's coastlines and borders.
 
     Returns (reprojected [row 0 = southernmost], lat_min, lat_max, lon_min, lon_max).
     """
+    R = 6378137.0  # WGS84 equatorial radius in metres
+
     data_sub = data[::stride, ::stride]
     lats_sub = lats_2d[::stride, ::stride]
     lons_sub = lons_2d[::stride, ::stride]
@@ -44,18 +46,27 @@ def reproject_to_latlon(data, lats_2d, lons_2d, stride=DATA_STRIDE):
     lon_min = float(lons_2d.min())
     lon_max = float(lons_2d.max())
 
+    # Web Mercator Y bounds (metres)
+    y_min = R * np.log(np.tan(np.pi / 4 + np.radians(lat_min) / 2))
+    y_max = R * np.log(np.tan(np.pi / 4 + np.radians(lat_max) / 2))
+
+    # Build a grid that is uniform in Mercator-Y (rows) and uniform in
+    # longitude (columns), then convert back to geographic lat/lon so
+    # griddata can query the LCC source points.
+    y_grid = np.linspace(y_min, y_max, nrows)   # uniform Mercator-Y steps
+    x_grid = np.linspace(np.radians(lon_min) * R, np.radians(lon_max) * R, ncols)
+    xmesh, ymesh = np.meshgrid(x_grid, y_grid)
+
+    lat_target = np.degrees(2 * np.arctan(np.exp(ymesh / R)) - np.pi / 2)
+    lon_target = np.degrees(xmesh / R)
+
     values = data_sub.ravel()
     valid = np.isfinite(values)
-
-    # Target: regular lat/lon grid, row 0 = southernmost (for origin='lower')
-    t_lats = np.linspace(lat_min, lat_max, nrows)
-    t_lons = np.linspace(lon_min, lon_max, ncols)
-    t_lon2d, t_lat2d = np.meshgrid(t_lons, t_lats)
 
     reprojected = griddata(
         np.column_stack([lats_sub.ravel()[valid], lons_sub.ravel()[valid]]),
         values[valid],
-        (t_lat2d, t_lon2d),
+        (lat_target, lon_target),
         method='linear',
         fill_value=np.nan,
     )
@@ -221,6 +232,24 @@ def main():
     for i, ds in enumerate(datasets):
         print(f"Dataset #{i}: {list(ds.data_vars)}")
 
+        # Extract coordinate arrays from the first variable in this dataset that
+        # carries them, so any variable processed below can use them even if
+        # temperature hasn't been seen yet (cfgrib splits variables across
+        # multiple Datasets in arbitrary order).
+        if lats_2d is None:
+            for _vname in ds.data_vars:
+                try:
+                    _var = ds[_vname]
+                    if hasattr(_var, 'latitude') and hasattr(_var, 'longitude'):
+                        lats_2d = _var.latitude.values
+                        lons_2d = _var.longitude.values.copy()
+                        if lons_2d.max() >= 180:
+                            lons_2d = lons_2d - 360
+                        print(f"  -> Coordinate arrays from '{_vname}'")
+                        break
+                except Exception:
+                    pass
+
         # Temperature
         for t_key in ['t2m', '2t', 't']:
             if t_key in ds and 'temp' not in processed_vars:
@@ -228,7 +257,8 @@ def main():
                 temp_f = (ds[t_key] - 273.15) * 9/5 + 32
                 vars_data['temp_k'] = ds[t_key].values
 
-                # Extract LCC coordinate arrays (shared by all variables on this grid)
+                # Refresh coordinate arrays from the temperature variable
+                # (same grid, but ensures lats_2d/lons_2d match temp's shape)
                 lats_2d = ds[t_key].latitude.values
                 lons_2d = ds[t_key].longitude.values.copy()
                 if lons_2d.max() >= 180:  # 0-360 → -180 to 180

@@ -251,10 +251,19 @@
             const arr = dataCache[name];
             if (!arr || !dataMeta) return null;
             const { rows, cols } = dataMeta;
-            // boundsArr is [sw_lat, sw_lon, ne_lat, ne_lon] — regular lat/lon grid extent
-            // Reprojected grid → linear interpolation is exact (no LCC distortion)
+            // boundsArr is [sw_lat, sw_lon, ne_lat, ne_lon]
             const [swLat, swLon, neLat, neLon] = boundsArr;
-            const rowFrac = (lat - swLat) / (neLat - swLat);
+
+            // The binary grid rows are equally spaced in Web Mercator Y (metres),
+            // matching the image reprojection. Use Mercator Y for row lookup so
+            // the hover/click values line up with the displayed pixels.
+            const R = 6378137;
+            const toMercY = φ => R * Math.log(Math.tan(Math.PI / 4 + φ * Math.PI / 360));
+            const y    = toMercY(lat);
+            const yMin = toMercY(swLat);
+            const yMax = toMercY(neLat);
+
+            const rowFrac = (y - yMin) / (yMax - yMin);
             const colFrac = (lng - swLon) / (neLon - swLon);
             if (rowFrac < 0 || rowFrac > 1 || colFrac < 0 || colFrac > 1) return null;
             const row = Math.min(rows - 1, Math.max(0, Math.round(rowFrac * (rows - 1))));
@@ -296,7 +305,7 @@
                 source: name + '-src',
                 paint: {
                     'raster-opacity': parseFloat(opacitySlider.value) / 100,
-                    'raster-resampling': 'nearest'
+                    'raster-resampling': 'linear'
                 },
                 layout: { visibility: 'visible' }
             }, beforeId);

@@ -305,7 +305,7 @@
                 source: name + '-src',
                 paint: {
                     'raster-opacity': parseFloat(opacitySlider.value) / 100,
-                    'raster-resampling': 'linear'
+                    'raster-resampling': 'nearest'
                 },
                 layout: { visibility: 'visible' }
             }, beforeId);

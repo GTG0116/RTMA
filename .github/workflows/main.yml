@@ -1,14 +1,18 @@
 name: Update RTMA Data
 
 on:
+  # Triggered by cron-job.org via repository_dispatch
   repository_dispatch:
-    types: [RTMA_update] # This is the event type cron-job.org will send
-  workflow_dispatch:      # Keeps the manual trigger from GitHub UI
-  # schedule:
-  #   - cron: '0 * * * *'  # Commented out so it relies purely on cron-job.org
+    types: [JTWC_update]
 
-permissions:
-  contents: write  # Needed to commit updated images back to the repo
+  # Optional: Keep workflow_dispatch for manual runs from GitHub UI
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: 'Force update even if data unchanged'
+        required: false
+        default: 'false'
+        type: boolean
 
 
 jobs:
